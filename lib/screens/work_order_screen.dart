@@ -132,6 +132,33 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
       if (referredTo == null || referredTo.trim().isEmpty) return;
     }
 
+    // 🔴 **SPEC-024 Phase 5 Step 2 — cancelling and handing back each need a
+    // STATED CAUSE, and the server refuses a blank one in the domain** (the
+    // rule moved into `ComplaintLifecycleService::transition()` on
+    // 2026-11-19). Asking here is not a second copy of that rule: it is the
+    // difference between a manager typing a sentence and a manager meeting a
+    // 422 he cannot act on.
+    String? reason;
+
+    if (act.value == 'cancel' || act.value == 'reject') {
+      reason = await _askForReason(act);
+
+      if (reason == null || reason.trim().isEmpty) return;
+    }
+
+    // 🔴 **Ruling 4 (Hashim, 2026-11-19): the extension decision lives on
+    // THIS screen and opens a dialog** — *"من شاشة تفاصيل أمر العمل؛ لأنه
+    // يحتاج إلى approved وnote"*. It is the only one of the manager's five
+    // that is not a single tap: two fields, one of which the domain
+    // *requires* when the answer is no.
+    _ExtensionDecision? decision;
+
+    if (act.value == 'decide_extension') {
+      decision = await _askForExtensionDecision();
+
+      if (decision == null) return;
+    }
+
     setState(() => _acting = true);
 
     if (act.value == 'upload_evidence') {
@@ -146,6 +173,22 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
       'complete' => await widget.repository.complete(widget.id),
       'refer' => await widget.repository.refer(widget.id, referredTo!.trim()),
       'confirm_referral' => await widget.repository.confirmReferral(widget.id),
+
+      // ─── SPEC-024 Phase 5, Step 2 — the Facility Manager's five ───
+      //
+      // ⚠️ None of these is queued: the repository sends them once. A
+      // manager's judgement drained hours later would land on a job that
+      // has moved.
+      'verify' => await widget.repository.verify(widget.id),
+      'close' => await widget.repository.close(widget.id),
+      'cancel' => await widget.repository.cancel(widget.id, reason!.trim()),
+      'reject' => await widget.repository.reject(widget.id, reason!.trim()),
+      'decide_extension' => await widget.repository.decideExtension(
+        widget.id,
+        approved: decision!.approved,
+        note: decision.note,
+      ),
+
       _ => const ActResult(ActOutcome.refused, message: 'This version of the app cannot do that yet.'),
     };
 
@@ -311,6 +354,105 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
             child: const Text('Record it'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// SPEC-024 Phase 5 Step 2 — the stated cause a cancellation or a hand-back
+  /// requires.
+  ///
+  /// ⚠️ **The act's own label is the title**, so the manager is never asked
+  /// *"why?"* without being told what he is answering about — the two acts
+  /// reach this dialog by different buttons and must not look identical in
+  /// it.
+  Future<String?> _askForReason(WorkOrderAction act) {
+    final controller = TextEditingController();
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(act.label),
+        content: TextField(
+          key: const Key('act-reason-field'),
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          decoration: InputDecoration(
+            labelText: 'Why?',
+            hintText: act.value == 'cancel'
+                ? 'e.g. reported twice; the other work order covers it'
+                : 'e.g. this needs the electrical team',
+          ),
+        ),
+        actions: [
+          TextButton(
+            key: const Key('act-reason-dismiss'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Not now'),
+          ),
+          TextButton(
+            key: const Key('act-reason-confirm'),
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: Text(act.label),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 🔴 **Ruling 4's dialog: `approved` and a note, on the DETAIL screen.**
+  ///
+  /// ⚠️ **Grant and Refuse are two buttons, not a switch with a confirm.**
+  /// The decision is the act; making the manager set a toggle and then press
+  /// *OK* invites the commonest mistake there is — pressing OK on the
+  /// default.
+  ///
+  /// 🔴 **A refusal with no note is refused by the DOMAIN** (*"refusing more
+  /// time requires a reason"*), so *Refuse* is disabled until something is
+  /// typed. ✅ A grant may carry a note and need not.
+  Future<_ExtensionDecision?> _askForExtensionDecision() {
+    final controller = TextEditingController();
+
+    return showDialog<_ExtensionDecision>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Request for more time'),
+          content: TextField(
+            key: const Key('extension-note-field'),
+            controller: controller,
+            autofocus: true,
+            maxLines: 3,
+            onChanged: (_) => setDialogState(() {}),
+            decoration: const InputDecoration(
+              labelText: 'Note',
+              hintText: 'Required to refuse; optional to grant',
+            ),
+          ),
+          actions: [
+            TextButton(
+              key: const Key('extension-dismiss'),
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Not now'),
+            ),
+            TextButton(
+              key: const Key('extension-refuse'),
+              onPressed: controller.text.trim().isEmpty
+                  ? null
+                  : () => Navigator.of(context).pop(
+                        _ExtensionDecision(approved: false, note: controller.text),
+                      ),
+              child: const Text('Refuse'),
+            ),
+            TextButton(
+              key: const Key('extension-grant'),
+              onPressed: () => Navigator.of(context).pop(
+                _ExtensionDecision(approved: true, note: controller.text),
+              ),
+              child: const Text('Grant'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -694,4 +836,16 @@ class _SlaLine extends StatelessWidget {
       ),
     );
   }
+}
+
+/// SPEC-024 Phase 5 Step 2 — what the extension dialog returns.
+///
+/// ⚠️ A record would have done; a named class is used so that `approved` is
+/// never read positionally. `(true, 'note')` and `(false, 'note')` differ by
+/// one character at a call site and by everything in the ledger.
+class _ExtensionDecision {
+  const _ExtensionDecision({required this.approved, this.note});
+
+  final bool approved;
+  final String? note;
 }

@@ -19,4 +19,9 @@ const workOrderActs = <String>{
   'refer',
   'confirm_referral',
   'upload_evidence',
+  'verify',
+  'close',
+  'cancel',
+  'reject',
+  'decide_extension',
 };

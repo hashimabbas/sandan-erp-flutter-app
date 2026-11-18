@@ -108,6 +108,43 @@ class FakeWorkOrderSource implements WorkOrderSource {
     return result;
   }
 
+  // ──────── the manager's five (SPEC-024 Phase 5 Step 2) ────────
+
+  @override
+  Future<ActResult> verify(String jobId) async {
+    calls.add('verify:$jobId');
+
+    return result;
+  }
+
+  @override
+  Future<ActResult> close(String jobId) async {
+    calls.add('close:$jobId');
+
+    return result;
+  }
+
+  @override
+  Future<ActResult> cancel(String jobId, String reason) async {
+    calls.add('cancel:$jobId:$reason');
+
+    return result;
+  }
+
+  @override
+  Future<ActResult> reject(String jobId, String reason) async {
+    calls.add('reject:$jobId:$reason');
+
+    return result;
+  }
+
+  @override
+  Future<ActResult> decideExtension(String jobId, {required bool approved, String? note}) async {
+    calls.add('decide:$jobId:$approved:${note ?? ''}');
+
+    return result;
+  }
+
   @override
   Future<int> pendingCount() async => pending.length;
 

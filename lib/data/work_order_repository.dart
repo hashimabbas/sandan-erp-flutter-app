@@ -126,6 +126,30 @@ abstract interface class WorkOrderSource {
     DateTime? capturedAt,
   });
 
+  /// SPEC-024 Phase 5, Step 2 — the Facility Manager's five.
+  ///
+  /// 🔴🔴 **NONE of these is queued offline, and that is a decision against
+  /// D3 rather than an omission of it.** D3's *"one path, so the rare case is
+  /// the only case"* is right for a technician: he is in a basement, the act
+  /// records what HE just did, and a minute's delay changes nothing. A
+  /// manager's act is a **judgement about a job's state** — close it, cancel
+  /// it, hand it back, grant the time — and a judgement drained four hours
+  /// later lands on a job that has moved. Verifying work that was reopened
+  /// since, or cancelling one a tenant has had done, is a worse failure than
+  /// being told now that there is no signal.
+  ///
+  /// ⚠️ **So these send ONCE and report what happened.** No outbox row, no
+  /// replay, and a test asserts the outbox is untouched.
+  Future<ActResult> verify(String jobId);
+
+  Future<ActResult> close(String jobId);
+
+  Future<ActResult> cancel(String jobId, String reason);
+
+  Future<ActResult> reject(String jobId, String reason);
+
+  Future<ActResult> decideExtension(String jobId, {required bool approved, String? note});
+
   /// How many acts are waiting to be sent — read by the sign-out warning
   /// (D8) and the list's pending markers.
   Future<int> pendingCount();
@@ -337,6 +361,84 @@ class WorkOrderRepository implements WorkOrderSource {
         ),
       )
       .toList(growable: false);
+
+  // ─────────── the manager's five (Phase 5 Step 2) ───────────
+  //
+  // 🔴🔴 Every one goes through [_directAct] and NOT through [_act]: a
+  // manager's judgement must not drain hours later onto a job that has moved.
+  // See the interface's docblock for why this departs from D3 deliberately.
+
+  @override
+  Future<ActResult> verify(String jobId) => _directAct(jobId, 'verify');
+
+  @override
+  Future<ActResult> close(String jobId) => _directAct(jobId, 'close');
+
+  @override
+  Future<ActResult> cancel(String jobId, String reason) =>
+      _directAct(jobId, 'cancel', body: {'reason': reason});
+
+  @override
+  Future<ActResult> reject(String jobId, String reason) =>
+      _directAct(jobId, 'reject', body: {'reason': reason});
+
+  @override
+  Future<ActResult> decideExtension(String jobId, {required bool approved, String? note}) =>
+      _directAct(jobId, 'extension/decide', body: {
+        'approved': approved,
+        // ⚠️ Omitted entirely when absent. The server validates `note` as
+        // `nullable|string`, so a null would pass — but sending a key the
+        // manager did not fill is this app asserting an empty note rather
+        // than no note, and a refusal with an empty note is refused by the
+        // DOMAIN ("refusing more time requires a reason").
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      });
+
+  /// Send it now, once, and never queue it.
+  ///
+  /// 🔴🔴 **The second path D3 forbids, built on purpose for one caller
+  /// group.** D3's argument is that a rarely-exercised path rots — true, and
+  /// the mitigation is that all five manager acts use this one, so it is
+  /// exercised by every verification, closure and cancellation in Sandan,
+  /// not by an edge case.
+  ///
+  /// ⚠️ **Unreachable is reported as a REFUSAL, never as `pending`.**
+  /// `pending` means *this phone is holding it for you*, and nothing is
+  /// holding anything here. Telling a manager his cancellation is "recorded"
+  /// when it will never be sent is the worst answer the app could give.
+  Future<ActResult> _directAct(
+    String jobId,
+    String suffix, {
+    Map<String, dynamic>? body,
+  }) async {
+    final result = await _service.send(
+      method: 'PATCH',
+      path: '/api/facility/work-orders/$jobId/$suffix',
+      body: body,
+    );
+
+    switch (result) {
+      case ApiSuccess(:final data):
+        final job = WorkOrder.fromJson(data);
+
+        // ✅ The cache takes the server's word for this ONE row, exactly as
+        // [_act] does. This is an upsert of the row the server just
+        // returned — never `replaceFor()`, which would delete the rest.
+        await store.upsert(userId, job);
+
+        return ActResult(ActOutcome.applied, job: job);
+
+      case ApiFailure(:final kind, :final message):
+        // 🔴 The same eviction rule the read and queued-act paths follow: the
+        // server has just said this row is not his, and a cached copy that
+        // outlives that answer is the scope leak with a longer fuse.
+        if (kind == ApiErrorKind.forbidden) {
+          await store.evict(userId, jobId);
+        }
+
+        return ActResult(ActOutcome.refused, message: message);
+    }
+  }
 
   /// Queue it, then try to send it.
   ///

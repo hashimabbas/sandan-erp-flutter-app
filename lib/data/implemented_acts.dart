@@ -32,6 +32,12 @@ const implementedActs = <String>{
   'refer',
   'confirm_referral',
   'upload_evidence',
+  // SPEC-024 Phase 5, Step 2 — the Facility Manager's five.
+  'verify',
+  'close',
+  'cancel',
+  'reject',
+  'decide_extension',
 };
 
 /// The acts the server offers that this build has no code for — **declared,
@@ -46,6 +52,11 @@ const implementedActs = <String>{
 /// ⚠️ Hashim's Step 0 boundary (2026-11-18) keeps all four out of scope:
 /// *"لا توسع النطاق إلى تكاملات Pause/Resume أو Materials أو Extension في هذه
 /// المرحلة"*. They are listed so they are visible, not so they are forgotten.
+///
+/// 🔧 **Phase 5 Step 2 leaves all four here and that is correct, not an
+/// inconsistency.** This build now performs the MANAGER's five while still
+/// not performing the technician's four — because these sets describe **the
+/// build**, never a role. A mixed list is the honest state of the app.
 const notYetImplementedActs = <String>{
   'pause',
   'resume',
