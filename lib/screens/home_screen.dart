@@ -13,6 +13,7 @@ import '../widgets/animated_gradient_background.dart';
 import '../widgets/task_row_tile.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
+import 'queue_screen.dart';
 import 'work_order_screen.dart';
 import 'new_complaint_screen.dart';
 
@@ -45,7 +46,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// One source for the screen and the list beneath it, so the sign-out
   /// warning and the rows read the same queue.
-  late final WorkOrderSource _source = widget.workOrderSource ??
+  late final WorkOrderSource _source =
+      widget.workOrderSource ??
       WorkOrderRepository(
         userId: widget.user.id,
         store: WorkOrderStore(LocalDatabase.instance),
@@ -86,9 +88,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(waiting == 1
-            ? 'One action has not been sent yet'
-            : '$waiting actions have not been sent yet'),
+        title: Text(
+          waiting == 1
+              ? 'One action has not been sent yet'
+              : '$waiting actions have not been sent yet',
+        ),
         // ⚠️ True to Phase 2's D3: the items are kept and will be sent under
         // HIS identity, never the next person's.
         content: const Text(
@@ -128,9 +132,9 @@ class _HomeScreenState extends State<HomeScreen> {
     await _authService.endExpiredSession();
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Your session has ended. Please sign in again.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Your session has ended. Please sign in again.')));
 
     _toLogin();
   }
@@ -155,10 +159,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _toLogin() {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
-    );
+    Navigator.of(
+      context,
+    ).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
   }
 
   String get _roleLabel {
@@ -178,9 +181,7 @@ class _HomeScreenState extends State<HomeScreen> {
       widget.user.role == FacilityRole.technician || widget.user.role == FacilityRole.worker;
 
   void _notImplemented(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature — coming soon')),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$feature — coming soon')));
   }
 
   @override
@@ -219,6 +220,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       : _ManagerDashboardView(
                           onAction: _notImplemented,
                           canCreateComplaint: widget.user.role == FacilityRole.facilityManager,
+                          userId: widget.user.id,
+                          onSessionExpired: _handleSessionExpired,
                         ),
                 ),
               ),
@@ -234,30 +237,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  static String _weekday(int day) => const [
-        'Monday',
-        'Tuesday',
-        'Wednesday',
-        'Thursday',
-        'Friday',
-        'Saturday',
-        'Sunday',
-      ][day - 1];
+  static String _weekday(int day) =>
+      const ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][day - 1];
 
   static String _month(int month) => const [
-        'January',
-        'February',
-        'March',
-        'April',
-        'May',
-        'June',
-        'July',
-        'August',
-        'September',
-        'October',
-        'November',
-        'December',
-      ][month - 1];
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ][month - 1];
 }
 
 // ─────────────────────────── Header ───────────────────────────
@@ -422,10 +418,20 @@ class _SectionTitle extends StatelessWidget {
 /// ✅ **What stays is what was always real:** raising a complaint, which this
 /// app has done since SPEC-004.
 class _ManagerDashboardView extends StatelessWidget {
-  const _ManagerDashboardView({required this.onAction, required this.canCreateComplaint});
+  const _ManagerDashboardView({
+    required this.onAction,
+    required this.canCreateComplaint,
+    required this.userId,
+    required this.onSessionExpired,
+  });
 
   final void Function(String feature) onAction;
   final bool canCreateComplaint;
+
+  /// SPEC-024 Phase 5, Step 1 — the queue needs the signed-in user, because
+  /// `WorkOrderRepository` scopes every read and write by it.
+  final int userId;
+  final VoidCallback onSessionExpired;
 
   @override
   Widget build(BuildContext context) {
@@ -438,10 +444,25 @@ class _ManagerDashboardView extends StatelessWidget {
           subtitle: 'Report a facility issue',
           icon: Icons.add_rounded,
           onTap: canCreateComplaint
-              ? () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const NewComplaintScreen()),
-                  )
+              ? () =>
+                    Navigator.of(context)
+                        .push(MaterialPageRoute(builder: (_) => const NewComplaintScreen()))
               : () => onAction('New Complaint'),
+        ),
+        const SizedBox(height: 14),
+        // 🎯 **SPEC-024 Phase 5, Step 1 — the manager's own work finally has
+        // a door.** Until now this screen offered him one action (raise a
+        // complaint) and a notice that everything else lives in the browser.
+        _PrimaryActionCard(
+          key: const Key('open-work-queue'),
+          title: 'Work Queue',
+          subtitle: 'Filter by status, priority, building, category or technician',
+          icon: Icons.filter_list_rounded,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => QueueScreen(userId: userId, onSessionExpired: onSessionExpired),
+            ),
+          ),
         ),
         const SizedBox(height: 28),
         Container(
@@ -480,6 +501,7 @@ class _ManagerDashboardView extends StatelessWidget {
 
 class _PrimaryActionCard extends StatelessWidget {
   const _PrimaryActionCard({
+    super.key,
     required this.title,
     required this.subtitle,
     required this.icon,
@@ -533,7 +555,11 @@ class _PrimaryActionCard extends StatelessWidget {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -553,7 +579,6 @@ class _PrimaryActionCard extends StatelessWidget {
     );
   }
 }
-
 
 // ─────────────────────────── Work list (shared) ───────────────────────────
 
@@ -605,10 +630,7 @@ class _WorkList extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(20)),
       child: Column(
         children: [
           for (var i = 0; i < items.length; i++) ...[
@@ -669,7 +691,8 @@ class _MyWorkView extends StatefulWidget {
 }
 
 class _MyWorkViewState extends State<_MyWorkView> {
-  late final WorkOrderSource _repository = widget.repository ??
+  late final WorkOrderSource _repository =
+      widget.repository ??
       WorkOrderRepository(
         userId: widget.userId,
         store: WorkOrderStore(LocalDatabase.instance),
@@ -777,7 +800,9 @@ class _MyWorkViewState extends State<_MyWorkView> {
               for (final job in _jobs)
                 _WorkListEntry(
                   icon: Icons.build_outlined,
-                  title: job.reference == null ? job.description : '${job.reference} \u00b7 ${job.description}',
+                  title: job.reference == null
+                      ? job.description
+                      : '${job.reference} \u00b7 ${job.description}',
                   subtitle: job.location,
                   status: job.status,
                   // ⚠️ Unsent work outranks both the breach and the priority
@@ -841,10 +866,7 @@ class _WorkListMessage extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(20)),
       child: Column(
         children: [
           Text(
@@ -897,11 +919,11 @@ class _BottomNavBar extends StatelessWidget {
   final bool isFieldRole;
 
   List<(IconData, String)> get _items => [
-        const (Icons.home_rounded, 'Home'),
-        if (!isFieldRole) const (Icons.assignment_outlined, 'Work'),
-        const (Icons.report_problem_outlined, 'Complaints'),
-        const (Icons.person_outline, 'Profile'),
-      ];
+    const (Icons.home_rounded, 'Home'),
+    if (!isFieldRole) const (Icons.assignment_outlined, 'Work'),
+    const (Icons.report_problem_outlined, 'Complaints'),
+    const (Icons.person_outline, 'Profile'),
+  ];
 
   @override
   Widget build(BuildContext context) {

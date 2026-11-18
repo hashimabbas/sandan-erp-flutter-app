@@ -3,6 +3,7 @@ import '../services/api_result.dart';
 import '../services/work_order_service.dart';
 import 'evidence_files.dart';
 import 'outbox.dart';
+import 'queue_filters.dart';
 import 'work_order_store.dart';
 
 /// Where the data on the screen actually came from.
@@ -98,6 +99,13 @@ class PendingAct {
 abstract interface class WorkOrderSource {
   Future<ApiResult<Cached<List<WorkOrder>>>> myWork();
 
+  /// SPEC-024 Phase 5, Step 1 — the manager's filtered queue.
+  ///
+  /// 🔴🔴 **A READ. It writes nothing.** See the implementation's
+  /// docblock: the cache belongs to the unfiltered sync, and a filtered list
+  /// handed to `replaceFor()` would delete every row outside the filter.
+  Future<ApiResult<List<WorkOrder>>> queue(QueueFilters filters);
+
   Future<ApiResult<Cached<WorkOrder>>> one(String id);
 
   /// SPEC-024 Phase 3 — the five field acts. Each one is queued first and
@@ -151,8 +159,8 @@ class WorkOrderRepository implements WorkOrderSource {
     required this.outbox,
     WorkOrderService? service,
     DateTime Function()? clock,
-  })  : _service = service ?? WorkOrderService(),
-        _clock = clock ?? DateTime.now;
+  }) : _service = service ?? WorkOrderService(),
+       _clock = clock ?? DateTime.now;
 
   /// 🔴 The signed-in `users.id` — an **int**, while a work order's id is a
   /// UUID string. Every read and write below is scoped by it, because ADR-012's
@@ -191,12 +199,14 @@ class WorkOrderRepository implements WorkOrderSource {
         // unreachable would be the most reassuring possible lie.
         if (cached.isEmpty) return ApiFailure(kind, message);
 
-        return ApiSuccess(Cached(
-          cached,
-          source: WorkSource.cache,
-          syncedAt: await store.syncedAtFor(userId),
-          notice: message,
-        ));
+        return ApiSuccess(
+          Cached(
+            cached,
+            source: WorkSource.cache,
+            syncedAt: await store.syncedAtFor(userId),
+            notice: message,
+          ),
+        );
     }
   }
 
@@ -204,6 +214,30 @@ class WorkOrderRepository implements WorkOrderSource {
   /// 🔴 **deletes the cached copy when the server answers 403**, because it has
   /// just said the row is not this man's, and a cached copy that outlives that
   /// answer is the scope leak with a longer fuse.
+  /// SPEC-024 Phase 5, Step 1 — the filtered queue, and **the only read in
+  /// this class that touches no disk at all**.
+  ///
+  /// 🔴🔴 **It must never write the cache, and that is not a preference.**
+  /// `WorkOrderStore.replaceFor()` opens with
+  /// `DELETE FROM work_orders WHERE user_id = ?`. Hand it the result of a
+  /// filtered fetch and it deletes every row outside the filter — which is
+  /// precisely the defect Step 0 fixed, one commit earlier, in this same class's
+  /// collaborator. A filter is a question about a subset; the cache is an answer
+  /// about the whole.
+  ///
+  /// ❌ **And it does NOT fall back to the cache on failure**, unlike
+  /// [myWork]. Two reasons, both deliberate:
+  ///   1. answering a filter from the cache would mean filtering in Dart, which
+  ///      is the aggregation this phase forbids;
+  ///   2. a stale answer to a filter the manager set one second ago is worse
+  ///      than an honest refusal — he would act on it.
+  ///
+  /// ✅ The page walk and the 50-page refusal are **reused**, not
+  /// reimplemented: a filtered list is still page one of N.
+  @override
+  Future<ApiResult<List<WorkOrder>>> queue(QueueFilters filters) =>
+      _service.fetchMyWork(filters: filters);
+
   @override
   Future<ApiResult<Cached<WorkOrder>>> one(String id) async {
     final result = await _service.fetchOne(id);
@@ -212,11 +246,9 @@ class WorkOrderRepository implements WorkOrderSource {
       case ApiSuccess(:final data):
         await store.upsert(userId, data);
 
-        return ApiSuccess(Cached(
-          data,
-          source: WorkSource.network,
-          syncedAt: await store.syncedAtFor(userId),
-        ));
+        return ApiSuccess(
+          Cached(data, source: WorkSource.network, syncedAt: await store.syncedAtFor(userId)),
+        );
 
       case ApiFailure(:final kind, :final message):
         if (kind == ApiErrorKind.forbidden) {
@@ -231,24 +263,24 @@ class WorkOrderRepository implements WorkOrderSource {
 
         if (cached == null) return ApiFailure(kind, message);
 
-        return ApiSuccess(Cached(
-          cached,
-          source: WorkSource.cache,
-          syncedAt: await store.syncedAtFor(userId),
-          notice: message,
-        ));
+        return ApiSuccess(
+          Cached(
+            cached,
+            source: WorkSource.cache,
+            syncedAt: await store.syncedAtFor(userId),
+            notice: message,
+          ),
+        );
     }
   }
 
   // ───────────────────────── the acts (Phase 3) ─────────────────────────
 
   @override
-  Future<ActResult> start(String jobId) =>
-      _act(jobId, 'PATCH', 'start');
+  Future<ActResult> start(String jobId) => _act(jobId, 'PATCH', 'start');
 
   @override
-  Future<ActResult> complete(String jobId) =>
-      _act(jobId, 'PATCH', 'complete');
+  Future<ActResult> complete(String jobId) => _act(jobId, 'PATCH', 'complete');
 
   @override
   Future<ActResult> refer(String jobId, String referredTo) =>
@@ -258,8 +290,7 @@ class WorkOrderRepository implements WorkOrderSource {
       _act(jobId, 'PATCH', 'refer', body: {'referred_to': referredTo});
 
   @override
-  Future<ActResult> confirmReferral(String jobId) =>
-      _act(jobId, 'PATCH', 'referral/confirm');
+  Future<ActResult> confirmReferral(String jobId) => _act(jobId, 'PATCH', 'referral/confirm');
 
   @override
   Future<ActResult> uploadEvidence(
@@ -267,47 +298,44 @@ class WorkOrderRepository implements WorkOrderSource {
     required String filePath,
     required String stage,
     DateTime? capturedAt,
-  }) =>
-      _act(
-        jobId,
-        'POST',
-        'evidence',
-        body: {
-          'stage': stage,
-          // 🎯 Sent because a queue makes the gap between capture and
-          // arrival real, and the server keeps the two timestamps apart on
-          // purpose. ⚠️ `device_identifier` is deliberately not sent: the
-          // server stores all three as claims it never trusts, so inventing
-          // a device id would add a dependency and no truth.
-          if (capturedAt != null) 'device_captured_at': capturedAt.toUtc().toIso8601String(),
-        },
-        filePath: filePath,
-        fileField: 'photo',
-        parsesWorkOrder: false,
-      );
+  }) => _act(
+    jobId,
+    'POST',
+    'evidence',
+    body: {
+      'stage': stage,
+      // 🎯 Sent because a queue makes the gap between capture and
+      // arrival real, and the server keeps the two timestamps apart on
+      // purpose. ⚠️ `device_identifier` is deliberately not sent: the
+      // server stores all three as claims it never trusts, so inventing
+      // a device id would add a dependency and no truth.
+      if (capturedAt != null) 'device_captured_at': capturedAt.toUtc().toIso8601String(),
+    },
+    filePath: filePath,
+    fileField: 'photo',
+    parsesWorkOrder: false,
+  );
 
   @override
   Future<int> pendingCount() => outbox.countFor(userId);
 
   @override
-  Future<Set<String>> pendingJobIds() async => (await outbox.pending(userId))
-      .map((item) => item.jobId)
-      .whereType<String>()
-      .toSet();
+  Future<Set<String>> pendingJobIds() async =>
+      (await outbox.pending(userId)).map((item) => item.jobId).whereType<String>().toSet();
 
   @override
   Future<List<PendingAct>> pendingActs() async => (await outbox.pending(userId))
-      .map((item) => PendingAct(
-            jobId: item.jobId,
-            // Reversing the app's OWN path construction, which is why this is
-            // not a second vocabulary: the repository built this string.
-            action: item.jobId == null
-                ? item.path
-                : item.path.split('/${item.jobId}/').last,
-            createdAt: item.createdAt,
-            attempts: item.attempts,
-            lastError: item.lastError,
-          ))
+      .map(
+        (item) => PendingAct(
+          jobId: item.jobId,
+          // Reversing the app's OWN path construction, which is why this is
+          // not a second vocabulary: the repository built this string.
+          action: item.jobId == null ? item.path : item.path.split('/${item.jobId}/').last,
+          createdAt: item.createdAt,
+          attempts: item.attempts,
+          lastError: item.lastError,
+        ),
+      )
       .toList(growable: false);
 
   /// Queue it, then try to send it.

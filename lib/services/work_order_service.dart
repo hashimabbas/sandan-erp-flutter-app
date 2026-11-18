@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import '../data/queue_filters.dart';
 import '../models/work_order.dart';
 import 'api_result.dart';
 import 'facility_session.dart';
@@ -22,8 +23,8 @@ import 'facility_session.dart';
 /// second answer to a question the ERP already answers (ADR-012).
 class WorkOrderService {
   WorkOrderService({http.Client? client, FacilitySession? session})
-      : _client = client ?? http.Client(),
-        _session = session ?? FacilitySession();
+    : _client = client ?? http.Client(),
+      _session = session ?? FacilitySession();
 
   final http.Client _client;
   final FacilitySession _session;
@@ -63,7 +64,16 @@ class WorkOrderService {
   /// from a later page. That is inherent to walking a live list with no
   /// cursor, it is bounded by the next sync, and it is not the defect being
   /// fixed here.
-  Future<ApiResult<List<WorkOrder>>> fetchMyWork({String? status}) async {
+  /// 🔧 **SPEC-024 Phase 5, Step 1 — `status` becomes the whole filter
+  /// set.** The seven keys live in [QueueFilters], which is the only place in
+  /// `lib/` that knows their server-side names. ⚠️ **Every filter is applied
+  /// by the server**; this method sends parameters and nothing else.
+  ///
+  /// 🔴 **A filtered result must NOT be cached.** The caller decides that,
+  /// and `WorkOrderRepository.queue()` is the path that does not: handing a
+  /// filtered list to `WorkOrderStore.replaceFor()` would delete every row
+  /// outside the filter, which is Step 0's defect wearing a filter's hat.
+  Future<ApiResult<List<WorkOrder>>> fetchMyWork({String? status, QueueFilters? filters}) async {
     // ⚠️ Keyed by id, so a row repeated across a page boundary **collapses**
     // instead of being inserted twice. The server now orders totally
     // (`created_at DESC, id DESC`) and should not repeat one — but a store
@@ -75,12 +85,17 @@ class WorkOrderService {
     var page = 1;
 
     while (true) {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/api/facility/work-orders')
-          .replace(queryParameters: {
-        'per_page': '$syncPageSize',
-        'page': '$page',
-        'status': ?status,
-      });
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/facility/work-orders').replace(
+        queryParameters: {
+          'per_page': '$syncPageSize',
+          'page': '$page',
+          // ⚠️ `status` stays a parameter of its own because Phase 1 shipped
+          // it and the field screens still pass it. When both are given the
+          // filter set wins, so there is one answer rather than two.
+          'status': ?status,
+          ...?filters?.toQuery(),
+        },
+      );
 
       final result = await _get(uri, (body) => body);
 
@@ -175,11 +190,13 @@ class WorkOrderService {
 
         response = await http.Response.fromStream(await _client.send(request));
       } else {
-        response = await _client.send(
-          http.Request(method, uri)
-            ..headers.addAll(headers)
-            ..body = jsonEncode(body ?? const <String, dynamic>{}),
-        ).then(http.Response.fromStream);
+        response = await _client
+            .send(
+              http.Request(method, uri)
+                ..headers.addAll(headers)
+                ..body = jsonEncode(body ?? const <String, dynamic>{}),
+            )
+            .then(http.Response.fromStream);
       }
     } on SocketException {
       return const ApiFailure(ApiErrorKind.network, _unreachable);
@@ -276,10 +293,7 @@ class WorkOrderService {
     if (response.statusCode == 403) {
       // Phase 0 returns this deliberately for a job assigned to somebody else.
       // It is a fact about the row, not about the session.
-      return const ApiFailure(
-        ApiErrorKind.forbidden,
-        'This work order is not assigned to you.',
-      );
+      return const ApiFailure(ApiErrorKind.forbidden, 'This work order is not assigned to you.');
     }
 
     if (response.statusCode != 200) {

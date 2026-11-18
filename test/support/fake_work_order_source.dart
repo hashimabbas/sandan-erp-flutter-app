@@ -1,3 +1,4 @@
+import 'package:sandan_facility_app/data/queue_filters.dart';
 import 'package:sandan_facility_app/data/work_order_repository.dart';
 import 'package:sandan_facility_app/models/work_order.dart';
 import 'package:sandan_facility_app/services/api_result.dart';
@@ -20,12 +21,35 @@ class FakeWorkOrderSource implements WorkOrderSource {
 
   int listCalls = 0;
 
+  /// SPEC-024 Phase 5, Step 1 — what the filtered queue returns.
+  ApiResult<List<WorkOrder>>? queueResult;
+
+  /// 🎯 **Every filter set this fake was asked for, in order.** A widget test
+  /// proves which filters a screen sent by reading this — and, just as
+  /// importantly, that it sent the queue call at all rather than filtering a
+  /// cached list in Dart.
+  final List<QueueFilters> queueCalls = <QueueFilters>[];
+
   @override
   Future<ApiResult<Cached<List<WorkOrder>>>> myWork() async {
     listCalls++;
 
     return list ??
-        const ApiFailure(ApiErrorKind.network, 'Could not reach the server. Check your connection.');
+        const ApiFailure(
+          ApiErrorKind.network,
+          'Could not reach the server. Check your connection.',
+        );
+  }
+
+  @override
+  Future<ApiResult<List<WorkOrder>>> queue(QueueFilters filters) async {
+    queueCalls.add(filters);
+
+    return queueResult ??
+        const ApiFailure(
+          ApiErrorKind.network,
+          'Could not reach the server. Check your connection.',
+        );
   }
 
   @override
