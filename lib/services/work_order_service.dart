@@ -28,17 +28,105 @@ class WorkOrderService {
   final http.Client _client;
   final FacilitySession _session;
 
+  /// How many rows one request asks for. 🔴 The server validates this and
+  /// **422s** above its own ceiling of 100 — it is not clamped, because a
+  /// clamp would hand back a short list and call it complete.
+  static const syncPageSize = 100;
+
+  /// 🔴 **A bound on the walk, and it is a refusal rather than a truncation.**
+  /// `scopeVisibleTo()` passes the Facility Manager's query through unchanged,
+  /// so his set is every complaint in the system and the walk would otherwise
+  /// have no end. At 100 a page this is 5,000 work orders; past that a phone
+  /// is the wrong tool, and silence is the wrong answer.
+  ///
+  /// ⚠️ It is a number with its reasoning written down, not a measurement. It
+  /// becomes measurable the first week a manager uses the screen.
+  static const maxPages = 50;
+
+  /// Every work order this user may see — **all of the pages, or none of
+  /// them**.
+  ///
+  /// 🔴 **The defect this replaces.** The endpoint has paginated at 20 since
+  /// SPEC-024 Phase 0's own first commit, and this method read `body['data']`
+  /// and never `meta` — the word `page` appeared nowhere in `lib/`. So the app
+  /// was capped at twenty, silently; and because the sync **replaces** the
+  /// cache with what it fetched, it was deleting the rest. It bites the
+  /// Facility Manager first, whose scope is the whole system.
+  ///
+  /// 🎯 **All or nothing, and the caller cannot opt out of that.** A partial
+  /// list never leaves this method: a failed page returns the failure, the
+  /// repository falls back to the cache, and the screen keeps saying where its
+  /// data came from. A half-finished sync must not quietly become *fresh*.
+  ///
+  /// ⚠️ **What this does not fix, said rather than engineered away:** a job
+  /// created *during* the walk may be missed, and one deleted may be absent
+  /// from a later page. That is inherent to walking a live list with no
+  /// cursor, it is bounded by the next sync, and it is not the defect being
+  /// fixed here.
   Future<ApiResult<List<WorkOrder>>> fetchMyWork({String? status}) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/facility/work-orders')
-        .replace(queryParameters: status == null ? null : {'status': status});
+    // ⚠️ Keyed by id, so a row repeated across a page boundary **collapses**
+    // instead of being inserted twice. The server now orders totally
+    // (`created_at DESC, id DESC`) and should not repeat one — but a store
+    // that threw mid-transaction on a duplicate id would leave correct
+    // behaviour with an impossible diagnosis. A `Map` keeps insertion order,
+    // so the server's order survives untouched.
+    final collected = <String, WorkOrder>{};
 
-    return _get(uri, (body) {
-      final rows = (body['data'] as List<dynamic>?) ?? const [];
+    var page = 1;
 
-      return rows
-          .map((row) => WorkOrder.fromJson(row as Map<String, dynamic>))
-          .toList(growable: false);
-    });
+    while (true) {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/facility/work-orders')
+          .replace(queryParameters: {
+        'per_page': '$syncPageSize',
+        'page': '$page',
+        'status': ?status,
+      });
+
+      final result = await _get(uri, (body) => body);
+
+      switch (result) {
+        case ApiFailure(:final kind, :final message):
+          // 🔴 No partial result, ever. Not even the pages that did arrive.
+          return ApiFailure(kind, message);
+
+        case ApiSuccess(:final data):
+          // 🔴 **Decoded inside a try, and an existing test is why.** Until
+          // Step 0 the rows were parsed inside `_get`'s own try, so a payload
+          // that changed shape arrived as *"the server sent something this
+          // version of the app cannot read"*. Walking pages moved the parse
+          // out here — and the first run of the suite turned that one honest
+          // failure into an **uncaught cast** rising through the service into
+          // a widget. ⚠️ Every page keeps the old guarantee.
+          try {
+            for (final row in (data['data'] as List<dynamic>?) ?? const []) {
+              final order = WorkOrder.fromJson(row as Map<String, dynamic>);
+
+              collected.putIfAbsent(order.id, () => order);
+            }
+          } catch (_) {
+            return const ApiFailure(ApiErrorKind.server, _unreadable);
+          }
+
+          // ⚠️ Read defensively rather than cast: a `meta` of the wrong shape
+          // must mean *one page*, not a crash. The same lesson, one key over.
+          final rawMeta = data['meta'];
+          final meta = rawMeta is Map<String, dynamic> ? rawMeta : null;
+          // ⚠️ A server that sends no `meta` is treated as a single page, so
+          // an older deployment keeps working rather than looping.
+          final lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
+          final currentPage = (meta?['current_page'] as num?)?.toInt() ?? page;
+
+          if (lastPage > maxPages) {
+            return const ApiFailure(ApiErrorKind.server, _tooMuchWork);
+          }
+
+          if (currentPage >= lastPage) {
+            return ApiSuccess(collected.values.toList(growable: false));
+          }
+
+          page = currentPage + 1;
+      }
+    }
   }
 
   Future<ApiResult<WorkOrder>> fetchOne(String id) async {
@@ -158,6 +246,12 @@ class WorkOrderService {
   static const _notYours = 'This work order is not assigned to you.';
   static const _serverUnhappy = 'The server could not answer right now. Please try again.';
   static const _unreadable = 'The server sent something this version of the app cannot read.';
+
+  /// 🔴 A refusal, not a truncation — and it names the limit, because a man
+  /// told only that something failed cannot tell anyone what to change.
+  static const _tooMuchWork =
+      'There is more work here than this app will load at once (over '
+      '${maxPages * syncPageSize} jobs). Filter the list on the web, or ask for a filtered view.';
 
   Future<ApiResult<T>> _get<T>(Uri uri, T Function(Map<String, dynamic>) parse) async {
     http.Response response;

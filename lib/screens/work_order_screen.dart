@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../data/evidence_files.dart';
+import '../data/implemented_acts.dart';
 
 import '../data/work_order_repository.dart';
 import '../models/work_order.dart';
@@ -510,10 +511,30 @@ class _ActionsPanel extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 FilledButton(
-                  onPressed: act.allowed && !busy ? () => onAct(act) : null,
+                  // 🔴 **SPEC-024 Phase 5, Step 0 — the runtime detector.**
+                  // An act this build has no code for is drawn DISABLED,
+                  // where it used to be drawn enabled and fail after the
+                  // press. ⚠️ This is not a second opinion about
+                  // availability: the server still decides `allowed`, and the
+                  // app only declines to offer what it cannot perform.
+                  onPressed: act.allowed && !busy && thisBuildPerforms(act.value)
+                      ? () => onAct(act)
+                      : null,
                   child: Text(act.label),
                 ),
-                if (!act.allowed && act.reason != null)
+                // The build's own limit is reported ahead of the server's
+                // reason, because when this build cannot act at all the
+                // server's sentence describes a decision that was never
+                // reached.
+                if (!thisBuildPerforms(act.value))
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4, left: 2),
+                    child: Text(
+                      thisBuildCannot,
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+                    ),
+                  )
+                else if (!act.allowed && act.reason != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4, left: 2),
                     child: Text(

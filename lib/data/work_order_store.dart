@@ -44,6 +44,17 @@ class WorkOrderStore {
   /// from this technician simply stops being returned, and must therefore
   /// disappear from his phone. A merge would have to infer that from absence,
   /// which is what a replace does without the inference (D4).
+  ///
+  /// 🔧 **CORRECTED 2026-11-18 (SPEC-024 Phase 5, Step 0). The sentence above
+  /// was false when it was written, and so was D4's version of it.** The
+  /// endpoint has **paginated at 20 since Phase 0's own first commit**; what it
+  /// returns is page one of N. This class was therefore being handed twenty
+  /// rows and deleting the rest — a merge would merely have failed to add
+  /// them. ⚠️ **The behaviour was right; only the premise was wrong**, so
+  /// nothing here changed: `WorkOrderService.fetchMyWork()` now walks every
+  /// page and returns the complete set **or a failure**, so what reaches this
+  /// method really is the full scoped set. ❌ A partial result must never be
+  /// passed to it.
   Future<void> replaceFor(
     int userId,
     List<WorkOrder> orders, {
