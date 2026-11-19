@@ -21,6 +21,7 @@ const workOrderActs = <String>{
   'confirm_referral',
   'upload_evidence',
   'assign',
+  'unassign',
   'verify',
   'close',
   'cancel',

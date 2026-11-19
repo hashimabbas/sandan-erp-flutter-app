@@ -125,6 +125,13 @@ class FakeWorkOrderSource implements WorkOrderSource {
   }
 
   @override
+  Future<ActResult> unassign(String jobId, int technicianId, String reason) async {
+    calls.add('unassign:$jobId:$technicianId:$reason');
+
+    return result;
+  }
+
+  @override
   Future<ActResult> verify(String jobId) async {
     calls.add('verify:$jobId');
 

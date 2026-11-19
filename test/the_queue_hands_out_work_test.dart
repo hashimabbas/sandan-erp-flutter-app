@@ -159,6 +159,104 @@ void main() {
     });
   });
 
+  // ───────────────── SPEC-036: who comes OFF ──────────────────────────────
+
+  group('taking somebody off', () {
+    late FakeWorkOrderSource source;
+
+    setUp(() => source = FakeWorkOrderSource());
+
+    Future<void> pumpJob(WidgetTester tester) async {
+      // ⚠️ **A taller window, because the sheet's rows fall below 600px** and
+      // a tap outside the render tree does not land — it presents as "the
+      // button did nothing", which is a harness fact and not a defect.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      source.detail = ApiSuccess(Cached(
+        WorkOrder.fromJson({
+          ...workOrderJson(id: 'job-1'),
+          'actions': [
+            {'value': 'unassign', 'label': 'Take somebody off this job', 'allowed': true, 'reason': null},
+          ],
+        }),
+        source: WorkSource.network,
+        syncedAt: DateTime(2026, 11, 19, 9),
+      ));
+
+      await tester.pumpWidget(MaterialApp(
+        home: WorkOrderScreen(id: 'job-1', repository: source, onSessionExpired: () {}),
+      ));
+
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    testWidgets('🔴 offers the men who are ACTUALLY on the job, and sends who with why', (tester) async {
+      // The list comes from the payload the server sent, so the app never
+      // offers an id the server would refuse and never guesses who is
+      // assigned. `workOrderJson` carries Fathi, id 7.
+      await pumpJob(tester);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Take somebody off this job'));
+
+      // ⚠️ **Several bounded pumps, not one.** A single `pump(400ms)` runs ONE
+      // frame, and the sheet's slide-up needs more — the tile then sits below
+      // the window and the tap lands nowhere, which reads as *the row does not
+      // work*. `pumpAndSettle()` is not the answer either: it never returns on
+      // this screen, because the gradient animates for ever.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // ⚠️ `findsWidgets`, not `findsOneWidget`: the name is on the screen's
+      // own "Assigned to" row as well as in the sheet. The sheet's entry is
+      // asserted by its KEY below, which is the unambiguous one.
+      expect(find.text('Fathi Al-Balushi'), findsWidgets);
+      expect(find.byKey(const Key('unassign-7')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('unassign-7')));
+
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      await tester.enterText(find.byKey(const Key('unassign-reason-field')), 'Wrong trade.');
+      await tester.tap(find.byKey(const Key('unassign-confirm')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(source.calls, ['unassign:job-1:7:Wrong trade.']);
+    });
+
+    testWidgets('🎯 sends nothing when no reason is given — the domain refuses a blank one', (tester) async {
+      await pumpJob(tester);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Take somebody off this job'));
+
+      // ⚠️ **Several bounded pumps, not one.** A single `pump(400ms)` runs ONE
+      // frame, and the sheet's slide-up needs more — the tile then sits below
+      // the window and the tap lands nowhere, which reads as *the row does not
+      // work*. `pumpAndSettle()` is not the answer either: it never returns on
+      // this screen, because the gradient animates for ever.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      await tester.tap(find.byKey(const Key('unassign-7')));
+
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      await tester.tap(find.byKey(const Key('unassign-dismiss')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // A manager who picked a man and then met a 422 would have done the work
+      // twice; asking first costs nothing and sends nothing.
+      expect(source.calls, isEmpty);
+    });
+  });
+
   // ───────────────────── the screen: who takes it ─────────────────────────
 
   group('the screen', () {
@@ -257,7 +355,11 @@ void main() {
       await openSheet(tester);
 
       expect(find.byKey(const Key('assign-adds-only-notice')), findsOneWidget);
-      expect(find.text('Adding somebody does not take anybody off this job.'), findsOneWidget);
+      // 🔧 The sentence was CORRECTED by SPEC-036: it used to end at "off
+      // this job", which was true only while nothing in the ERP could remove
+      // a man. Now something can, so it says where.
+      expect(find.textContaining('Adding somebody does not take anybody off'), findsOneWidget);
+      expect(find.textContaining('Take somebody off this job'), findsWidgets);
     });
 
     testWidgets('⚠️ Assign is DISABLED while the choice would change nothing', (tester) async {

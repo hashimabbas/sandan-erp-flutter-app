@@ -180,6 +180,19 @@ abstract interface class WorkOrderSource {
   /// out loud rather than letting a manager discover it.
   Future<ActResult> assign(String jobId, List<int> technicianIds);
 
+  /// SPEC-036 — take somebody off this job.
+  ///
+  /// 🔴 **The other half of [assign], and it did not exist anywhere until
+  /// 2026-11-19.** The server adds with `syncWithoutDetaching`, so a man put
+  /// on a job by mistake stayed on it until the job closed.
+  ///
+  /// ⚠️ **Direct, never queued** — a manager's act is a judgement about the
+  /// present (ADR-022), and one drained hours later would take a man off a
+  /// job he may already have finished.
+  ///
+  /// 🔴 `reason` is required by the DOMAIN: the record has to say why.
+  Future<ActResult> unassign(String jobId, int technicianId, String reason);
+
   /// How many acts are waiting to be sent — read by the sign-out warning
   /// (D8) and the list's pending markers.
   Future<int> pendingCount();
@@ -426,6 +439,10 @@ class WorkOrderRepository implements WorkOrderSource {
   @override
   Future<ActResult> assign(String jobId, List<int> technicianIds) =>
       _directAct(jobId, 'assign', body: {'technician_ids': technicianIds});
+
+  @override
+  Future<ActResult> unassign(String jobId, int technicianId, String reason) =>
+      _directAct(jobId, 'unassign', body: {'user_id': technicianId, 'reason': reason});
 
   @override
   Future<ActResult> decideExtension(String jobId, {required bool approved, String? note}) =>

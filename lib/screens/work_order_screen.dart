@@ -178,6 +178,18 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
     // 🔴 **SPEC-024 Phase 5, Step 3 — assigning asks WHO first.** It is
     // the second act on this screen that is not a single tap, and like the
     // extension decision it lives here and never on a queue row (ruling 4).
+    // 🔴 **SPEC-036 — taking somebody off asks WHO and WHY**, and it is the
+    // third act on this screen that is not a single tap. ⚠️ The man is chosen
+    // from the people actually on the job, so the app never sends an id the
+    // server would refuse.
+    ({int id, String reason})? removal;
+
+    if (act.value == 'unassign') {
+      removal = await _askWhoComesOff();
+
+      if (removal == null) return;
+    }
+
     List<int>? chosen;
 
     if (act.value == 'assign') {
@@ -214,6 +226,7 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
       // manager's judgement drained hours later would land on a job that
       // has moved.
       'assign' => await widget.repository.assign(widget.id, chosen!),
+      'unassign' => await widget.repository.unassign(widget.id, removal!.id, removal.reason),
       'verify' => await widget.repository.verify(widget.id),
       'close' => await widget.repository.close(widget.id),
       'cancel' => await widget.repository.cancel(widget.id, reason!.trim()),
@@ -477,9 +490,13 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 6),
-                  // 🔴 The sentence the finding document asks for.
+                  // 🔧 **CORRECTED 2026-11-19 by SPEC-036.** It read *"Adding
+                  // somebody does not take anybody off this job"* — true when
+                  // written, and the honest warning the finding document
+                  // asked for, because nothing in the ERP could remove a man.
+                  // 🎯 Now something can, so the sentence says where.
                   const Text(
-                    'Adding somebody does not take anybody off this job.',
+                    'Adding somebody does not take anybody off. Use “Take somebody off this job” for that.',
                     key: Key('assign-adds-only-notice'),
                     style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
                   ),
@@ -528,6 +545,95 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
         },
       ),
     );
+  }
+
+  /// SPEC-036 — **who comes off, and why.**
+  ///
+  /// 🔴 **The list is the men actually on the job**, read from the payload the
+  /// server sent. The app never offers an id the server would refuse, and it
+  /// never guesses who is assigned.
+  ///
+  /// ⚠️ **The reason is asked in the same flow**, because the domain refuses a
+  /// blank one: a manager who picked a man and then met a 422 would have done
+  /// the work twice.
+  Future<({int id, String reason})?> _askWhoComesOff() async {
+    final job = _job;
+
+    if (job == null || job.technicians.isEmpty) return null;
+
+    final chosen = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 18, 20, 4),
+              child: Text(
+                'Who comes off this job?',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                'His assignment is recorded as ended — he is not removed from the job’s history.',
+                style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+              ),
+            ),
+            for (final person in job.technicians)
+              ListTile(
+                key: Key('unassign-${person.id}'),
+                title: Text(person.name, style: const TextStyle(fontSize: 13.5)),
+                trailing: const Icon(Icons.person_remove_outlined, size: 18),
+                onTap: () => Navigator.of(sheetContext).pop(int.tryParse(person.id)),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (chosen == null || !mounted) return null;
+
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final controller = TextEditingController();
+
+        return AlertDialog(
+          title: const Text('Take somebody off this job'),
+          content: TextField(
+            key: const Key('unassign-reason-field'),
+            controller: controller,
+            autofocus: true,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Why?',
+              hintText: 'e.g. wrong trade; this needs the electrical team',
+            ),
+          ),
+          actions: [
+            TextButton(
+              key: const Key('unassign-dismiss'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Not now'),
+            ),
+            TextButton(
+              key: const Key('unassign-confirm'),
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('Take off'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (reason == null || reason.trim().isEmpty) return null;
+
+    return (id: chosen, reason: reason.trim());
   }
 
   Future<String?> _askForReason(WorkOrderAction act) {
