@@ -69,6 +69,13 @@ class FakeWorkOrderSource implements WorkOrderSource {
   Set<String> pending = const {};
 
   @override
+  Future<ActResult> arrive(String jobId, {DateTime? at}) async {
+    calls.add('arrive:$jobId');
+
+    return result;
+  }
+
+  @override
   Future<ActResult> start(String jobId) async {
     calls.add('start:$jobId');
 

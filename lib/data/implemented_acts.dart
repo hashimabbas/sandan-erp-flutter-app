@@ -27,6 +27,8 @@ import '../contracts/work_order_acts.dart';
 
 /// The acts `WorkOrderScreen` dispatches today.
 const implementedActs = <String>{
+  // SPEC-034 — the technician says he is on site, before he starts.
+  'arrive',
   'start',
   'complete',
   'refer',

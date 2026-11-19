@@ -10,6 +10,7 @@
 // and per user, and only the server answers it (ADR-013).
 
 const workOrderActs = <String>{
+  'arrive',
   'start',
   'complete',
   'pause',

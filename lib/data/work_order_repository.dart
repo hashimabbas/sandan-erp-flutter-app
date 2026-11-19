@@ -111,6 +111,19 @@ abstract interface class WorkOrderSource {
   /// SPEC-024 Phase 3 — the five field acts. Each one is queued first and
   /// sent immediately after, so there is no second code path for being
   /// offline (D3): the rare case is the only case.
+  /// SPEC-034 — the technician records that he is on site.
+  ///
+  /// 🔴 **Queued, unlike the manager's six**, and ADR-022 is why: a
+  /// technician's act **records the past** — *I arrived at 09:12* is still
+  /// true at 12:19 — while a manager's act is a judgement about the present.
+  ///
+  /// 🔴🔴 **And it carries the instant it was taken.** The body holds
+  /// `arrived_at`, so a drain three hours later reports **when he arrived**
+  /// and not when the signal came back. Without it the server would stamp its
+  /// own clock and manufacture a breach out of a basement — which is the one
+  /// figure this whole feature exists to make honest.
+  Future<ActResult> arrive(String jobId, {DateTime? at});
+
   Future<ActResult> start(String jobId);
 
   Future<ActResult> complete(String jobId);
@@ -316,6 +329,17 @@ class WorkOrderRepository implements WorkOrderSource {
   }
 
   // ───────────────────────── the acts (Phase 3) ─────────────────────────
+
+  @override
+  Future<ActResult> arrive(String jobId, {DateTime? at}) => _act(
+        jobId,
+        'PATCH',
+        'arrive',
+        // ⚠️ **UTC, always.** The server parses an ISO-8601 instant; sending a
+        // local wall-clock time would hand it a figure four hours out in
+        // Oman, and the arrival deadline is measured in minutes.
+        body: {'arrived_at': (at ?? DateTime.now()).toUtc().toIso8601String()},
+      );
 
   @override
   Future<ActResult> start(String jobId) => _act(jobId, 'PATCH', 'start');

@@ -199,6 +199,10 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
     }
 
     final result = switch (act.value) {
+      // 🔴 **SPEC-034 — a single tap, and no dialog**: arrival has nothing
+      // to type. ⚠️ The repository stamps the instant HERE, on the phone, so
+      // a queued act drained hours later still reports when he arrived.
+      'arrive' => await widget.repository.arrive(widget.id),
       'start' => await widget.repository.start(widget.id),
       'complete' => await widget.repository.complete(widget.id),
       'refer' => await widget.repository.refer(widget.id, referredTo!.trim()),
