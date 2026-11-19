@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/assignee.dart';
 import '../models/complaint_lookups.dart';
+import '../models/work_order_summary.dart';
 import '../models/work_order.dart' show Vocab;
 import 'facility_session.dart';
 
@@ -238,6 +239,31 @@ class ComplaintService {
   /// picker is **optional** (D1), and a complaint that cannot be logged
   /// because a convenience lookup failed would be a worse outcome than one
   /// logged without an assignee.
+  /// SPEC-024 Phase 5, Step 4 — the manager's four figures.
+  ///
+  /// 🔴 **Returns `null` when the figures are UNAVAILABLE, and that is the
+  /// whole contract.** Every other lookup in this class returns an empty value
+  /// on failure, because losing a lookup costs one control. Losing a FIGURE is
+  /// different: a zero and a failure must never look alike on this screen,
+  /// which once showed counts that were not real. `null` means *say nothing*.
+  Future<WorkOrderSummary?> fetchSummary() async {
+    try {
+      final response = await _client.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/facility/work-orders/summary'),
+        headers: await _authHeaders(),
+      );
+
+      if (response.statusCode != 200) return null;
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+      return WorkOrderSummary.fromJson(body['data'] as Map<String, dynamic>);
+    } catch (_) {
+      // ⚠️ Includes a malformed payload: a missing key is not a zero.
+      return null;
+    }
+  }
+
   Future<AssigneeList> fetchAssignees({String? categoryId}) async {
     final query = categoryId == null ? '' : '?category_id=$categoryId';
 

@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../data/local_database.dart';
+import '../data/queue_filters.dart';
 import '../data/outbox.dart';
 import '../data/work_order_repository.dart';
 import '../data/work_order_store.dart';
 import '../models/facility_user.dart';
 import '../models/work_order.dart';
+import '../models/work_order_summary.dart';
 import '../services/api_result.dart';
 import '../services/auth_service.dart';
+import '../services/complaint_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/animated_gradient_background.dart';
 import '../widgets/task_row_tile.dart';
@@ -28,7 +31,7 @@ import 'new_complaint_screen.dart';
 /// authorization change (Facility Manager-only complaint creation and the
 /// technician/worker My Work split are preserved exactly as before).
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.user, this.workOrderSource});
+  const HomeScreen({super.key, required this.user, this.workOrderSource, this.complaintService});
 
   final FacilityUser user;
 
@@ -36,6 +39,10 @@ class HomeScreen extends StatefulWidget {
   /// real database, and a widget test must not perform real I/O — see
   /// `WorkOrderSource`.
   final WorkOrderSource? workOrderSource;
+
+  /// Injected by tests only (SPEC-024 Phase 5, Step 4). It serves the
+  /// manager's four figures, and a widget test must not reach the network.
+  final ComplaintService? complaintService;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -222,6 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           canCreateComplaint: widget.user.role == FacilityRole.facilityManager,
                           userId: widget.user.id,
                           onSessionExpired: _handleSessionExpired,
+                          service: widget.complaintService,
                         ),
                 ),
               ),
@@ -417,13 +425,23 @@ class _SectionTitle extends StatelessWidget {
 ///
 /// ✅ **What stays is what was always real:** raising a complaint, which this
 /// app has done since SPEC-004.
-class _ManagerDashboardView extends StatelessWidget {
+/// 🔧 **SPEC-024 Phase 5, Step 4 — the four figures are back, and this time
+/// they are counted by the ERP.** The notice below is **discharged, not
+/// deleted**: it promised the numbers would return built on real data, and
+/// `GET facility/work-orders/summary` is that. It still renders whenever the
+/// figures cannot be fetched, because a zero and a failure must never look
+/// alike on the screen that learnt that lesson.
+class _ManagerDashboardView extends StatefulWidget {
   const _ManagerDashboardView({
     required this.onAction,
     required this.canCreateComplaint,
     required this.userId,
     required this.onSessionExpired,
+    this.service,
   });
+
+  /// Injected by tests only.
+  final ComplaintService? service;
 
   final void Function(String feature) onAction;
   final bool canCreateComplaint;
@@ -432,6 +450,47 @@ class _ManagerDashboardView extends StatelessWidget {
   /// `WorkOrderRepository` scopes every read and write by it.
   final int userId;
   final VoidCallback onSessionExpired;
+
+  @override
+  State<_ManagerDashboardView> createState() => _ManagerDashboardViewState();
+}
+
+class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
+  late final ComplaintService _service = widget.service ?? ComplaintService();
+
+  WorkOrderSummary? _summary;
+  bool _loadingFigures = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFigures();
+  }
+
+  /// ⚠️ **No cache, deliberately.** The queue has no offline story by design
+  /// (Step 1), and a count read from a snapshot is one a manager would act on.
+  Future<void> _loadFigures() async {
+    final summary = await _service.fetchSummary();
+
+    if (!mounted) return;
+
+    setState(() {
+      _summary = summary;
+      _loadingFigures = false;
+    });
+  }
+
+  void _openQueue({QueueFilters filters = const QueueFilters()}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => QueueScreen(
+          userId: widget.userId,
+          onSessionExpired: widget.onSessionExpired,
+          initialFilters: filters,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -443,11 +502,11 @@ class _ManagerDashboardView extends StatelessWidget {
           title: 'New Complaint',
           subtitle: 'Report a facility issue',
           icon: Icons.add_rounded,
-          onTap: canCreateComplaint
-              ? () =>
-                    Navigator.of(context)
-                        .push(MaterialPageRoute(builder: (_) => NewComplaintScreen(userId: userId)))
-              : () => onAction('New Complaint'),
+          onTap: widget.canCreateComplaint
+              ? () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => NewComplaintScreen(userId: widget.userId)),
+                )
+              : () => widget.onAction('New Complaint'),
         ),
         const SizedBox(height: 14),
         // 🎯 **SPEC-024 Phase 5, Step 1 — the manager's own work finally has
@@ -458,43 +517,161 @@ class _ManagerDashboardView extends StatelessWidget {
           title: 'Work Queue',
           subtitle: 'Filter by status, priority, building, category or technician',
           icon: Icons.filter_list_rounded,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => QueueScreen(userId: userId, onSessionExpired: onSessionExpired),
-            ),
-          ),
+          onTap: _openQueue,
         ),
         const SizedBox(height: 28),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
+        const _SectionTitle('Right now'),
+        _figures(),
+        const SizedBox(height: 28),
+      ],
+    );
+  }
+
+  /// 🔴 **Three states, and the third is the one that matters.** Loading,
+  /// four figures, or — when the server could not be reached or answered
+  /// anything but 200 — **no figure at all**, with the reason. A zero and a
+  /// failure must never look alike on this screen: it is the screen that
+  /// showed four invented counts, and the notice below is the one that
+  /// replaced them.
+  Widget _figures() {
+    if (_loadingFigures) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(child: SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+
+    final summary = _summary;
+
+    if (summary == null) {
+      return Container(
+        key: const Key('figures-unavailable'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The figures could not be loaded',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              // 🎯 The standard this screen set when the invented counts were
+              // deleted: "removed rather than left to be quoted".
+              'No number is shown rather than a wrong one. They are counted by the '
+              'server, so this needs a connection — the web app has them meanwhile.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                key: const Key('figures-retry'),
+                onPressed: () {
+                  setState(() => _loadingFigures = true);
+                  _loadFigures();
+                },
+                child: const Text('Try again'),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        _FigureTile(
+          key: const Key('figure-open'),
+          label: 'Open',
+          value: summary.open,
+          onTap: _openQueue,
+        ),
+        const SizedBox(width: 10),
+        _FigureTile(
+          key: const Key('figure-in-progress'),
+          label: 'In progress',
+          value: summary.inProgress,
+          onTap: () => _openQueue(filters: const QueueFilters(status: 'in_progress')),
+        ),
+        const SizedBox(width: 10),
+        _FigureTile(
+          key: const Key('figure-completed-today'),
+          label: 'Done today',
+          value: summary.completedToday,
+          onTap: () => _openQueue(filters: const QueueFilters(status: 'completed')),
+        ),
+        const SizedBox(width: 10),
+        // 🔴 **"Late to assign", never "Late".** The tile counts ASSIGNMENT
+        // breaches alone; the queue's `breached` filter is the wider set
+        // (assignment OR arrival), so this tile opens a list that may be
+        // LONGER than its own number. Two names, because they are two sets —
+        // and the arrival half is the figure Hashim forbade until SPEC-034.
+        _FigureTile(
+          key: const Key('figure-overdue'),
+          label: 'Late to assign',
+          value: summary.overdueAssignment,
+          onTap: () => _openQueue(filters: const QueueFilters(breached: true)),
+        ),
+      ],
+    );
+  }
+}
+
+/// SPEC-024 Phase 5, Step 4 — one figure, and a door into the list behind it.
+class _FigureTile extends StatelessWidget {
+  const _FigureTile({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String label;
+  final int value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
           decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: const Column(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Operational figures live in the web app',
-                style: TextStyle(
+                '$value',
+                style: const TextStyle(
                   color: AppColors.textPrimary,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
-                'This screen used to show counts that were not real. They have been '
-                'removed rather than left to be quoted. Open complaints, SLA breaches '
-                'and assignment all stay in the browser until this view is built on '
-                'the field data the app is now collecting.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.5),
+                label,
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3),
               ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

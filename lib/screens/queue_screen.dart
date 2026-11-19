@@ -41,10 +41,18 @@ class QueueScreen extends StatefulWidget {
     required this.onSessionExpired,
     this.repository,
     this.service,
+    this.initialFilters = const QueueFilters(),
   });
 
   final int userId;
   final VoidCallback onSessionExpired;
+
+  /// SPEC-024 Phase 5, Step 4 — a tile opens this screen already filtered.
+  ///
+  /// ⚠️ **The tile does not pre-compute the list**; it passes the same
+  /// question the user could have asked with the controls, and the server
+  /// answers it. The filter bar shows the choice, so he can widen it.
+  final QueueFilters initialFilters;
 
   /// Injected by tests only.
   final WorkOrderSource? repository;
@@ -65,7 +73,7 @@ class _QueueScreenState extends State<QueueScreen> {
 
   late final ComplaintService _service = widget.service ?? ComplaintService();
 
-  QueueFilters _filters = const QueueFilters();
+  late QueueFilters _filters = widget.initialFilters;
 
   bool _loading = true;
   String? _error;
