@@ -296,15 +296,29 @@ class _QueueScreenState extends State<QueueScreen> {
           status: job.status,
           // ⚠️ Never a breach judgement: that boolean is computed by the ERP.
           time: job.sla.assignmentBreached || job.sla.arrivalBreached ? 'Late' : job.priority.label,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => WorkOrderScreen(
-                id: job.id,
-                repository: _repository,
-                onSessionExpired: widget.onSessionExpired,
+          // 🔧 **SPEC-024 Phase 5, Step 3 — the list reloads when he comes
+          // back** (Hashim, 2026-11-19). A job he has just handed to somebody
+          // may no longer match the filter he is standing in — *unassigned*
+          // being the obvious one — and the row **disappearing** is the
+          // correct outcome: this screen is read-through with no offline
+          // story by design, and a stale row is one a manager would act on.
+          //
+          // ⚠️ It reloads on EVERY return, not only after an act. This
+          // screen cannot know what happened inside, and one request on a
+          // back-press is cheaper than a rule that guesses.
+          onTap: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => WorkOrderScreen(
+                  id: job.id,
+                  repository: _repository,
+                  onSessionExpired: widget.onSessionExpired,
+                ),
               ),
-            ),
-          ),
+            );
+
+            if (mounted) await _load();
+          },
         );
       },
     );

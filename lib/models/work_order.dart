@@ -142,6 +142,7 @@ class WorkOrder {
     required this.building,
     required this.blockNumber,
     required this.category,
+    required this.categoryId,
     required this.subcategory,
     required this.technicians,
     required this.sla,
@@ -168,6 +169,12 @@ class WorkOrder {
         building: _ref(json['building'], 'name'),
         blockNumber: json['block_number'] as String?,
         category: json['category'] as String?,
+        // 🔧 **SPEC-024 Phase 5, Step 3 — the id, because a NAME cannot be
+        // asked a question.** `lookup/assignees` takes `?category_id=`, so
+        // without this the assign picker on this screen would rank nobody by
+        // trade. ⚠️ Nullable and `toString()`d: the key is absent from every
+        // row cached by an earlier build, and a cached row must still decode.
+        categoryId: json['category_id']?.toString(),
         subcategory: json['subcategory'] as String?,
         technicians: ((json['technicians'] as List<dynamic>?) ?? const [])
             .map((t) => NamedRef(
@@ -200,6 +207,7 @@ class WorkOrder {
   final NamedRef? building;
   final String? blockNumber;
   final String? category;
+  final String? categoryId;
   final String? subcategory;
   final List<NamedRef> technicians;
   final SlaState sla;

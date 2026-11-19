@@ -32,7 +32,9 @@ const implementedActs = <String>{
   'refer',
   'confirm_referral',
   'upload_evidence',
-  // SPEC-024 Phase 5, Step 2 — the Facility Manager's five.
+  // SPEC-024 Phase 5, Step 2 — the Facility Manager's five, and Step 3's
+  // `assign` ahead of them.
+  'assign',
   'verify',
   'close',
   'cancel',

@@ -150,6 +150,23 @@ abstract interface class WorkOrderSource {
 
   Future<ActResult> decideExtension(String jobId, {required bool approved, String? note});
 
+  /// SPEC-024 Phase 5, Step 3 — hand the job to somebody.
+  ///
+  /// 🔴 **One sender, and the older one was DELETED to get there.**
+  /// `ComplaintService.assignWorkOrder()` shipped with SPEC-025 Step 6 and
+  /// sent the same PATCH from the creation screen. Two senders for one
+  /// endpoint is the drift D3 argues against, and this is the better of the
+  /// two: it upserts the row the server returns, so the cache does not go on
+  /// claiming the job is unassigned, and it reports an unreachable server as
+  /// a **refusal** rather than `pending` (ADR-022).
+  ///
+  /// ⚠️ **It ADDS people and takes nobody off.** The server uses
+  /// `syncWithoutDetaching`, and nothing in the entire ERP can detach a
+  /// human-assigned technician — see
+  /// `SPEC-024-finding-nobody-can-be-taken-off-a-job.md`. The screen says so
+  /// out loud rather than letting a manager discover it.
+  Future<ActResult> assign(String jobId, List<int> technicianIds);
+
   /// How many acts are waiting to be sent — read by the sign-out warning
   /// (D8) and the list's pending markers.
   Future<int> pendingCount();
@@ -381,6 +398,10 @@ class WorkOrderRepository implements WorkOrderSource {
   @override
   Future<ActResult> reject(String jobId, String reason) =>
       _directAct(jobId, 'reject', body: {'reason': reason});
+
+  @override
+  Future<ActResult> assign(String jobId, List<int> technicianIds) =>
+      _directAct(jobId, 'assign', body: {'technician_ids': technicianIds});
 
   @override
   Future<ActResult> decideExtension(String jobId, {required bool approved, String? note}) =>

@@ -257,64 +257,17 @@ class ComplaintService {
     }
   }
 
-  /// SPEC-025 Step 6 — hand an existing job to somebody.
-  ///
-  /// 🔴 **Never queued.** The outbox carries a technician's own field acts; a
-  /// manager assigning work he cannot see confirmed is a promise this app
-  /// cannot keep, so offline this simply fails and says so — the same rule the
-  /// password change follows.
-  ///
-  /// ⚠️ Reuses `CreateComplaintResult` rather than declaring an identical
-  /// second class: success, a message and the server's field errors are the
-  /// same three facts, and `errors.technician_ids[0]` is the contract both
-  /// endpoints answer with.
-  Future<CreateComplaintResult> assignWorkOrder({
-    required String complaintId,
-    required List<int> technicianIds,
-  }) async {
-    http.Response response;
-    try {
-      response = await _client.patch(
-        Uri.parse('${ApiConfig.baseUrl}/api/facility/work-orders/$complaintId/assign'),
-        headers: await _authHeaders(),
-        body: jsonEncode({'technician_ids': technicianIds}),
-      );
-    } catch (_) {
-      return const CreateComplaintResult(
-        success: false,
-        message: 'Could not reach the server. Assigning needs a connection.',
-      );
-    }
-
-    if (response.statusCode == 200) {
-      return const CreateComplaintResult(success: true);
-    }
-
-    if (response.statusCode == 422) {
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final errors = (body['errors'] as Map<String, dynamic>? ?? {});
-
-      return CreateComplaintResult(
-        success: false,
-        message: errors.isEmpty
-            ? body['message'] as String? ?? 'This job cannot be assigned.'
-            : (errors.values.first as List).first as String,
-        fieldErrors: errors.map((key, value) => MapEntry(key, (value as List).first as String)),
-      );
-    }
-
-    if (response.statusCode == 403) {
-      return const CreateComplaintResult(
-        success: false,
-        message: 'Assigning work is not something your role does.',
-      );
-    }
-
-    return const CreateComplaintResult(
-      success: false,
-      message: 'Something went wrong. Please try again.',
-    );
-  }
+  // 🔧 **SPEC-024 Phase 5, Step 3 — `assignWorkOrder()` was DELETED here.**
+  // It shipped with SPEC-025 Step 6 as this app's only way to hand out a job,
+  // and Step 3 needed the same PATCH from the work-order screen. Two senders
+  // for one endpoint is the drift D3 argues against, so the weaker one went:
+  // this one reported success **without touching the cache**, so a job
+  // assigned from the phone went on being cached as unassigned until the next
+  // full refresh.
+  //
+  // ✅ Its callers moved to `WorkOrderSource.assign()` — including the
+  // creation screen's *"Assign it now?"* dialog, which is why that screen
+  // now takes a repository and a `userId`.
 }
 
 /// What `lookup/vocabulary` returns: the server's own words, in the server's

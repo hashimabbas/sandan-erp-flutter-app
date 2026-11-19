@@ -220,48 +220,13 @@ void main() {
       expect((jsonDecode(sent!.body) as Map<String, dynamic>).containsKey('technician_ids'), isFalse);
     });
 
-    test('assigns an existing job', () async {
-      http.Request? sent;
-
-      final service = ComplaintService(
-        session: FacilitySession(),
-        client: MockClient((request) async {
-          sent = request;
-          return http.Response(jsonEncode({'data': {}}), 200, headers: {'content-type': 'application/json'});
-        }),
-      );
-
-      final result = await service.assignWorkOrder(complaintId: 'job-1', technicianIds: [9]);
-
-      expect(result.success, isTrue);
-      expect(sent!.method, 'PATCH');
-      expect(sent!.url.path, endsWith('/api/facility/work-orders/job-1/assign'));
-      expect(jsonDecode(sent!.body)['technician_ids'], [9]);
-    });
-
-    test('surfaces the server\'s own refusal', () async {
-      final result = await serviceReturning({
-        'message': 'The given data was invalid.',
-        'errors': {
-          'technician_ids': ['Cannot assign a job in status in_progress: work has started.'],
-        },
-      }, status: 422).assignWorkOrder(complaintId: 'job-1', technicianIds: [9]);
-
-      expect(result.success, isFalse);
-      expect(result.message, contains('work has started'));
-    });
-
-    test('🔴 offline is a plain failure that names the reason — never a queue', () async {
-      final service = ComplaintService(
-        session: FacilitySession(),
-        client: MockClient((_) async => throw http.ClientException('no network')),
-      );
-
-      final result = await service.assignWorkOrder(complaintId: 'job-1', technicianIds: [9]);
-
-      expect(result.success, isFalse);
-      expect(result.message, contains('needs a connection'));
-    });
+    // 🔧 **SPEC-024 Phase 5, Step 3 — three tests MOVED out of this file.**
+    // They proved `ComplaintService.assignWorkOrder()`: the request it sent,
+    // the server's refusal, and that being offline was a plain failure rather
+    // than a queue. That sender was deleted — one endpoint, one sender — and
+    // the same three guarantees are now asserted against
+    // `WorkOrderSource.assign()` in `the_queue_hands_out_work_test.dart`,
+    // where a fourth joins them: the outbox is never touched.
   });
 
   group('the party picker', () {

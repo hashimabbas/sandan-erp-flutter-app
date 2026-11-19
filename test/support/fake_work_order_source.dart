@@ -108,7 +108,14 @@ class FakeWorkOrderSource implements WorkOrderSource {
     return result;
   }
 
-  // ──────── the manager's five (SPEC-024 Phase 5 Step 2) ────────
+  // ──────── the manager's six (SPEC-024 Phase 5 Steps 2–3) ────────
+
+  @override
+  Future<ActResult> assign(String jobId, List<int> technicianIds) async {
+    calls.add('assign:$jobId:${technicianIds.join(',')}');
+
+    return result;
+  }
 
   @override
   Future<ActResult> verify(String jobId) async {

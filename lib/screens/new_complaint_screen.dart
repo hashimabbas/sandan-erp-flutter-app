@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../data/local_database.dart';
+import '../data/outbox.dart';
+import '../data/work_order_repository.dart';
+import '../data/work_order_store.dart';
 import '../models/complaint_lookups.dart';
 import '../models/work_order.dart' show Vocab;
 import '../models/assignee.dart';
@@ -22,9 +26,26 @@ class NewComplaintScreen extends StatefulWidget {
   /// widget tests at all**: it built its own `ComplaintService`, which reaches
   /// for the network and for secure storage, and neither exists under
   /// `flutter test`.
-  const NewComplaintScreen({super.key, this.service});
+  ///
+  /// 🔧 **SPEC-024 Phase 5, Step 3 — it now takes a `userId` and a
+  /// repository too.** Assigning moved off `ComplaintService` and onto the
+  /// one sender in `WorkOrderSource`, and that sender caches the row the
+  /// server returns **per user**, so the screen that uses it must know whose
+  /// phone this is. The id is threaded from `HomeScreen`, which already holds
+  /// it for the queue.
+  const NewComplaintScreen({
+    super.key,
+    required this.userId,
+    this.service,
+    this.repository,
+  });
+
+  final int userId;
 
   final ComplaintService? service;
+
+  /// Injected by tests only.
+  final WorkOrderSource? repository;
 
   @override
   State<NewComplaintScreen> createState() => _NewComplaintScreenState();
@@ -32,6 +53,14 @@ class NewComplaintScreen extends StatefulWidget {
 
 class _NewComplaintScreenState extends State<NewComplaintScreen> {
   late final ComplaintService _service = widget.service ?? ComplaintService();
+
+  late final WorkOrderSource _repository =
+      widget.repository ??
+      WorkOrderRepository(
+        userId: widget.userId,
+        store: WorkOrderStore(LocalDatabase.instance),
+        outbox: Outbox(LocalDatabase.instance),
+      );
   final _descriptionController = TextEditingController();
   final _blockController = TextEditingController();
 
@@ -335,14 +364,17 @@ class _NewComplaintScreenState extends State<NewComplaintScreen> {
                         error = null;
                       });
 
-                      final result = await _service.assignWorkOrder(
-                        complaintId: complaintId,
-                        technicianIds: chosen.toList(),
+                      // 🔧 **Step 3: the one sender.** Same endpoint, same
+                      // refusal sentences — and now the cache learns the
+                      // job is assigned instead of being told nothing.
+                      final result = await _repository.assign(
+                        complaintId,
+                        chosen.toList(),
                       );
 
                       if (!dialogContext.mounted) return;
 
-                      if (result.success) {
+                      if (result.outcome == ActOutcome.applied) {
                         Navigator.of(dialogContext).pop();
                         return;
                       }

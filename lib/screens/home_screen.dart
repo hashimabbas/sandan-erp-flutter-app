@@ -446,7 +446,7 @@ class _ManagerDashboardView extends StatelessWidget {
           onTap: canCreateComplaint
               ? () =>
                     Navigator.of(context)
-                        .push(MaterialPageRoute(builder: (_) => const NewComplaintScreen()))
+                        .push(MaterialPageRoute(builder: (_) => NewComplaintScreen(userId: userId)))
               : () => onAction('New Complaint'),
         ),
         const SizedBox(height: 14),

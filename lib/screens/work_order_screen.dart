@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -8,10 +9,13 @@ import '../data/evidence_files.dart';
 import '../data/implemented_acts.dart';
 
 import '../data/work_order_repository.dart';
+import '../models/assignee.dart';
 import '../models/work_order.dart';
+import '../services/complaint_service.dart';
 import '../services/api_result.dart';
 import '../theme/app_colors.dart';
 import '../widgets/animated_gradient_background.dart';
+import '../widgets/assignee_picker.dart';
 import '../widgets/status_chip.dart';
 
 /// SPEC-024 Phase 1, Step 4 — one work order, in full.
@@ -33,7 +37,17 @@ class WorkOrderScreen extends StatefulWidget {
     required this.repository,
     required this.onSessionExpired,
     this.pickPhoto,
+    this.service,
   });
+
+  /// SPEC-024 Phase 5, Step 3 — the staff lookup, injected by tests only.
+  ///
+  /// ⚠️ It is a LOOKUP and never a second opinion about who may be
+  /// assigned: the list it serves is the web's own, the trade only **marks**
+  /// a man (SPEC-025: *the filter informs, never constrains*), and whether
+  /// this manager may assign at all was answered by the server in the act's
+  /// `allowed`.
+  final ComplaintService? service;
 
   /// Injected by tests only. 🔴 `image_picker` and `path_provider` both work
   /// through platform channels, which `flutter test` does not have — so a
@@ -58,6 +72,8 @@ class WorkOrderScreen extends StatefulWidget {
 }
 
 class _WorkOrderScreenState extends State<WorkOrderScreen> {
+  late final ComplaintService _service = widget.service ?? ComplaintService();
+
   bool _loading = true;
   String? _error;
   WorkOrder? _job;
@@ -159,6 +175,20 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
       if (decision == null) return;
     }
 
+    // 🔴 **SPEC-024 Phase 5, Step 3 — assigning asks WHO first.** It is
+    // the second act on this screen that is not a single tap, and like the
+    // extension decision it lives here and never on a queue row (ruling 4).
+    List<int>? chosen;
+
+    if (act.value == 'assign') {
+      chosen = await _askWhoTakesIt();
+
+      // ⚠️ An empty choice CANCELS rather than sending: the server
+      // validates `technician_ids` as `min:1`, and meeting a 422 for a form
+      // the app could answer itself is what the reason dialogs already avoid.
+      if (chosen == null || chosen.isEmpty) return;
+    }
+
     setState(() => _acting = true);
 
     if (act.value == 'upload_evidence') {
@@ -174,11 +204,12 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
       'refer' => await widget.repository.refer(widget.id, referredTo!.trim()),
       'confirm_referral' => await widget.repository.confirmReferral(widget.id),
 
-      // ─── SPEC-024 Phase 5, Step 2 — the Facility Manager's five ───
+      // ─── SPEC-024 Phase 5, Steps 2–3 — the Facility Manager's six ───
       //
       // ⚠️ None of these is queued: the repository sends them once. A
       // manager's judgement drained hours later would land on a job that
       // has moved.
+      'assign' => await widget.repository.assign(widget.id, chosen!),
       'verify' => await widget.repository.verify(widget.id),
       'close' => await widget.repository.close(widget.id),
       'cancel' => await widget.repository.cancel(widget.id, reason!.trim()),
@@ -365,6 +396,136 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
   /// *"why?"* without being told what he is answering about — the two acts
   /// reach this dialog by different buttons and must not look identical in
   /// it.
+  /// SPEC-024 Phase 5, Step 3 — **who takes this job?**
+  ///
+  /// 🔴 **The men already on the job are PRE-SELECTED, and that is a
+  /// correctness decision rather than a convenience.** The server assigns with
+  /// `syncWithoutDetaching`: it adds and never removes. A picker that opened
+  /// empty would read as *nobody is on this job*, and a manager would re-pick
+  /// the man already there — or, worse, believe he had replaced him.
+  ///
+  /// 🔴 **So the sheet says out loud what it cannot do.** Nothing in the
+  /// entire ERP can take a human-assigned technician off a job: the only
+  /// `detach()` in the application replaces the SYSTEM's own automatic
+  /// assignment (SPEC-031 Step 8). Hashim put that capability out of scope on
+  /// 2026-11-19 — see `SPEC-024-finding-nobody-can-be-taken-off-a-job.md` —
+  /// and an absence a manager discovers by being surprised is the thing that
+  /// finding exists to prevent.
+  ///
+  /// ⚠️ **The trade only marks a man.** `fetchAssignees()` is asked with this
+  /// job's category so the picker can show whose trade matches, and it
+  /// excludes nobody (SPEC-025: *the filter informs, never constrains*).
+  Future<List<int>?> _askWhoTakesIt() async {
+    final job = _job;
+
+    if (job == null) return null;
+
+    // ⚠️ Already-assigned ids come back as STRINGS on the wire, like every id
+    // in this payload. A silent `int.parse` failure here would quietly
+    // unselect a man who is on the job, so anything unparseable is dropped
+    // rather than guessed at.
+    final current = job.technicians
+        .map((person) => int.tryParse(person.id))
+        .whereType<int>()
+        .toSet();
+
+    var chosen = Set<int>.from(current);
+    var list = const AssigneeList.empty();
+    var loading = true;
+
+    // 🔴 Loaded BEFORE the sheet opens would mean a frozen screen with no
+    // explanation; loaded inside it, the picker shows its own spinner.
+    final future = _service.fetchAssignees(categoryId: job.categoryId);
+
+    if (!mounted) return null;
+
+    return showModalBottomSheet<List<int>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          if (loading) {
+            future.then((result) {
+              if (!sheetContext.mounted) return;
+
+              setSheetState(() {
+                list = result;
+                loading = false;
+              });
+            });
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Hand the job to somebody',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  // 🔴 The sentence the finding document asks for.
+                  const Text(
+                    'Adding somebody does not take anybody off this job.',
+                    key: Key('assign-adds-only-notice'),
+                    style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Assigning needs a connection — it is not saved on this phone.',
+                    style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 14),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: AssigneePicker(
+                        list: list,
+                        selected: chosen,
+                        loading: loading,
+                        onChanged: (next) => setSheetState(() => chosen = next),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        key: const Key('assign-dismiss'),
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        child: const Text('Not now'),
+                      ),
+                      TextButton(
+                        key: const Key('assign-confirm'),
+                        // ⚠️ Disabled when nothing would change: the server
+                        // refuses an empty list, and re-sending exactly the
+                        // men already on the job is a request that asserts
+                        // nothing.
+                        onPressed: chosen.isEmpty || setEquals(chosen, current)
+                            ? null
+                            : () => Navigator.of(sheetContext).pop(chosen.toList()),
+                        child: const Text('Assign'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<String?> _askForReason(WorkOrderAction act) {
     final controller = TextEditingController();
 
