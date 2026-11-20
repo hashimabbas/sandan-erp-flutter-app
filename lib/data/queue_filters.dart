@@ -8,7 +8,7 @@
 /// would answer it from a snapshot, which is worse than not answering.
 ///
 /// ⚠️ **The parameter names are the server's contract**, and they are written
-/// once, here. `WorkOrderQueueFilters` in the ERP validates exactly these seven
+/// once, here. `WorkOrderQueueFilters` in the ERP validates exactly these EIGHT
 /// keys; a name typed a second time somewhere else in `lib/` is how the two
 /// drift apart.
 ///
@@ -24,6 +24,7 @@ class QueueFilters {
     this.subcategoryId,
     this.technicianId,
     this.breached = false,
+    this.arrival,
   });
 
   final String? status;
@@ -44,6 +45,15 @@ class QueueFilters {
   /// asks the question and never answers it.
   final bool breached;
 
+  /// SPEC-038 — which of today's arrival outcomes to show: `in_time`,
+  /// `late` or `not_recorded`.
+  ///
+  /// 🔴 **A string, validated by the SERVER against its enum.** The three
+  /// values are the ERP's, and `?arrival=nonsense` is a 422 there rather than
+  /// a parameter quietly ignored — so this app never has to decide what an
+  /// unknown value means.
+  final String? arrival;
+
   bool get isEmpty =>
       status == null &&
       priority == null &&
@@ -51,6 +61,7 @@ class QueueFilters {
       categoryId == null &&
       subcategoryId == null &&
       technicianId == null &&
+      arrival == null &&
       !breached;
 
   /// The query parameters, with every unset filter left out entirely.
@@ -61,6 +72,7 @@ class QueueFilters {
     'category_id': ?categoryId,
     'subcategory_id': ?subcategoryId,
     'technician_id': ?technicianId?.toString(),
+    'arrival': ?arrival,
     if (breached) 'breached': '1',
   };
 
@@ -72,6 +84,7 @@ class QueueFilters {
     String? subcategoryId,
     int? technicianId,
     bool? breached,
+    String? arrival,
     Set<String> clear = const {},
   }) => QueueFilters(
     status: clear.contains('status') ? null : (status ?? this.status),
@@ -81,6 +94,7 @@ class QueueFilters {
     subcategoryId: clear.contains('subcategory_id') ? null : (subcategoryId ?? this.subcategoryId),
     technicianId: clear.contains('technician_id') ? null : (technicianId ?? this.technicianId),
     breached: clear.contains('breached') ? false : (breached ?? this.breached),
+    arrival: clear.contains('arrival') ? null : (arrival ?? this.arrival),
   );
 
   /// 🔧 **Clearing the category clears the subcategory with it.**

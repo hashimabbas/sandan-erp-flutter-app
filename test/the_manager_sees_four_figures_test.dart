@@ -70,10 +70,18 @@ void main() {
 
     expect(asked.single.path, endsWith('/api/facility/work-orders/summary'));
 
-    expect(find.text('7'), findsOneWidget);
-    expect(find.text('2'), findsOneWidget);
-    expect(find.text('4'), findsOneWidget);
-    expect(find.text('1'), findsOneWidget);
+    // 🔧 **SPEC-038 — scoped to each tile's own key, and the arrival card is
+    // why.** These four assertions read BARE DIGITS off the whole screen with
+    // `findsOneWidget`, so any second widget rendering the same digit broke
+    // them — the card adds three more numbers, and `1` or `4` appearing in it
+    // is ordinary. The test was fragile by construction; the card is what
+    // exposed it. ✅ Asserting the digit **inside its own tile** is also the
+    // stronger claim: it proves each number reached the right tile, which a
+    // screen-wide `find.text` never did.
+    expect(find.descendant(of: find.byKey(const Key('figure-open')), matching: find.text('7')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('figure-in-progress')), matching: find.text('2')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('figure-completed-today')), matching: find.text('4')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('figure-overdue')), matching: find.text('1')), findsOneWidget);
 
     expect(find.text('Open'), findsOneWidget);
     expect(find.text('In progress'), findsOneWidget);
@@ -109,6 +117,89 @@ void main() {
 
     expect(find.byKey(const Key('figures-unavailable')), findsOneWidget);
     expect(find.text('7'), findsNothing);
+  });
+
+
+  // ─── SPEC-038 — the arrival card ──────────────────────────────────────────
+
+  testWidgets('🔴 shows NO card when the server has not shipped the block, and keeps the four', (tester) async {
+    // 🔴🔴 **The compatibility case, and the reason the block is optional.**
+    // The two repositories deploy independently. Parsing `arrival_today` as
+    // required would mean a newer app against an older server throws on the
+    // whole payload — and the manager would lose the four figures he already
+    // had, to gain a card.
+    await pump(tester, serving(body: {
+      'data': {
+        'open': 7,
+        'in_progress': 2,
+        'completed_today': 4,
+        'overdue_assignment': 1,
+      },
+    }));
+
+    expect(find.byKey(const Key('arrival-card')), findsNothing);
+    expect(find.byKey(const Key('figures-unavailable')), findsNothing);
+    expect(
+      find.descendant(of: find.byKey(const Key('figure-open')), matching: find.text('7')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('✅ renders the three arrival numbers, and never the bare word Late', (tester) async {
+    await pump(tester, serving(body: {
+      'data': {
+        'open': 7,
+        'in_progress': 2,
+        'completed_today': 4,
+        'overdue_assignment': 1,
+        'arrival_today': {'in_time': 5, 'late': 3, 'not_recorded': 6},
+      },
+    }));
+
+    expect(
+      find.descendant(of: find.byKey(const Key('arrival-in-time')), matching: find.text('5')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const Key('arrival-late')), matching: find.text('3')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const Key('arrival-not-recorded')), matching: find.text('6')),
+      findsOneWidget,
+    );
+
+    // 🔴 *Proved late*, never *Late*: that word belongs to the queue's
+    // `breached` filter, which is assignment OR arrival — a wider set.
+    expect(find.text('Proved late'), findsOneWidget);
+    expect(find.text('Late'), findsNothing);
+    expect(find.text('Late to assign'), findsOneWidget);
+  });
+
+  testWidgets('✅ each part opens the queue on ITS OWN arrival value and nothing else', (tester) async {
+    await pump(tester, serving(body: {
+      'data': {
+        'open': 7,
+        'in_progress': 2,
+        'completed_today': 4,
+        'overdue_assignment': 1,
+        'arrival_today': {'in_time': 5, 'late': 3, 'not_recorded': 6},
+      },
+    }));
+
+    await tester.tap(find.byKey(const Key('arrival-not-recorded')));
+
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    final queue = tester.widget<QueueScreen>(find.byType(QueueScreen));
+
+    expect(queue.initialFilters.arrival, 'not_recorded');
+    // ⚠️ And NO other filter rides along. A door that also set `breached`
+    // would open a list the card never counted.
+    expect(queue.initialFilters.status, isNull);
+    expect(queue.initialFilters.breached, isFalse);
   });
 
   testWidgets('✅ a tile opens the queue, already filtered', (tester) async {

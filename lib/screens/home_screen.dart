@@ -588,41 +588,185 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
       );
     }
 
-    return Row(
+    final arrival = summary.arrivalToday;
+
+    // 🔴 **The arrival figure is a CARD below the row, not a fifth tile.** Two
+    // reasons, and the first is not the layout: the promise has three
+    // outcomes, and any single integer must either drop *not recorded*
+    // (understating) or absorb it (the conflation this project retired). The
+    // second is that four tiles already fill a phone's width.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _FigureTile(
-          key: const Key('figure-open'),
-          label: 'Open',
-          value: summary.open,
-          onTap: _openQueue,
+        Row(
+        children: [
+          _FigureTile(
+            key: const Key('figure-open'),
+            label: 'Open',
+            value: summary.open,
+            onTap: _openQueue,
+          ),
+          const SizedBox(width: 10),
+          _FigureTile(
+            key: const Key('figure-in-progress'),
+            label: 'In progress',
+            value: summary.inProgress,
+            onTap: () => _openQueue(filters: const QueueFilters(status: 'in_progress')),
+          ),
+          const SizedBox(width: 10),
+          _FigureTile(
+            key: const Key('figure-completed-today'),
+            label: 'Done today',
+            value: summary.completedToday,
+            onTap: () => _openQueue(filters: const QueueFilters(status: 'completed')),
+          ),
+          const SizedBox(width: 10),
+          // 🔴 **"Late to assign", never "Late".** The tile counts ASSIGNMENT
+          // breaches alone; the queue's `breached` filter is the wider set
+          // (assignment OR arrival), so this tile opens a list that may be
+          // LONGER than its own number. Two names, because they are two sets —
+          // and the arrival half is the figure Hashim forbade until SPEC-034.
+          _FigureTile(
+            key: const Key('figure-overdue'),
+            label: 'Late to assign',
+            value: summary.overdueAssignment,
+            onTap: () => _openQueue(filters: const QueueFilters(breached: true)),
+          ),
+        ],
         ),
-        const SizedBox(width: 10),
-        _FigureTile(
-          key: const Key('figure-in-progress'),
-          label: 'In progress',
-          value: summary.inProgress,
-          onTap: () => _openQueue(filters: const QueueFilters(status: 'in_progress')),
-        ),
-        const SizedBox(width: 10),
-        _FigureTile(
-          key: const Key('figure-completed-today'),
-          label: 'Done today',
-          value: summary.completedToday,
-          onTap: () => _openQueue(filters: const QueueFilters(status: 'completed')),
-        ),
-        const SizedBox(width: 10),
-        // 🔴 **"Late to assign", never "Late".** The tile counts ASSIGNMENT
-        // breaches alone; the queue's `breached` filter is the wider set
-        // (assignment OR arrival), so this tile opens a list that may be
-        // LONGER than its own number. Two names, because they are two sets —
-        // and the arrival half is the figure Hashim forbade until SPEC-034.
-        _FigureTile(
-          key: const Key('figure-overdue'),
-          label: 'Late to assign',
-          value: summary.overdueAssignment,
-          onTap: () => _openQueue(filters: const QueueFilters(breached: true)),
-        ),
+        // ⚠️ Absent block ⇒ no card. The server has not shipped SPEC-038, and
+        // this app does not invent three zeros nobody counted.
+        if (arrival != null) ...[
+          const SizedBox(height: 10),
+          _ArrivalCard(
+            arrival: arrival,
+            onPart: (value) => _openQueue(filters: QueueFilters(arrival: value)),
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// SPEC-038 — **today's arrival promise, in three parts, each a door.**
+///
+/// 🎯 **Why this is not a tile.** Sandan promised arrival in minutes
+/// (`ARRIVAL_MINUTES`, four deadlines by priority) and nothing on this screen
+/// said whether the promise was kept. But the promise has three outcomes the
+/// ERP can tell apart, and a single integer must either drop *not recorded*
+/// — understating — or absorb it, which is the conflation a whole phase was
+/// spent retiring.
+///
+/// 🔴 **No part is labelled `Late`.** That word belongs to the queue's
+/// `breached` filter, which is assignment **or** arrival — a wider set. Two
+/// names, because they are two sets.
+class _ArrivalCard extends StatelessWidget {
+  const _ArrivalCard({required this.arrival, required this.onPart});
+
+  final ArrivalToday arrival;
+
+  /// Called with the `arrival` filter value the tapped part stands for.
+  final void Function(String value) onPart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('arrival-card'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Today's arrival deadlines",
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          // ⚠️ The caption is part of the figure, not decoration: *proved*
+          // and *not recorded* are what keep the three numbers readable as
+          // three answers rather than one score.
+          const Text(
+            'Deadlines that have passed today',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _ArrivalPart(
+                key: const Key('arrival-in-time'),
+                label: 'In time',
+                value: arrival.inTime,
+                onTap: () => onPart('in_time'),
+              ),
+              _ArrivalPart(
+                key: const Key('arrival-late'),
+                label: 'Proved late',
+                value: arrival.late,
+                onTap: () => onPart('late'),
+              ),
+              _ArrivalPart(
+                key: const Key('arrival-not-recorded'),
+                label: 'Not recorded',
+                value: arrival.notRecorded,
+                onTap: () => onPart('not_recorded'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One of the arrival card's three parts, and the list behind it.
+class _ArrivalPart extends StatelessWidget {
+  const _ArrivalPart({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String label;
+  final int value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$value',
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

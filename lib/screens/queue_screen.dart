@@ -341,7 +341,8 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 }
 
-/// The seven controls, in the order Hashim set on 2026-11-18.
+/// The EIGHT controls, in the order Hashim set on 2026-11-18, with
+/// SPEC-038's arrival filter after them.
 ///
 /// ⚠️ `breached` is last because it is a different **kind** of control — a
 /// boolean, not a value picker — not because it matters least. It is the
@@ -461,6 +462,28 @@ class _FilterBar extends StatelessWidget {
               onSelected: (on) => onChanged(filters.copyWith(breached: on)),
             ),
           ),
+          // 🔴 **SPEC-038 — the EIGHTH control, and it exists so the card's
+          // filter can be SEEN and CLEARED.** A manager arriving from the
+          // arrival card would otherwise be looking at a filtered list with
+          // no control naming the filter — the cousin of the defect this bar
+          // already paid for, when a refactor *"removed all seven filter
+          // controls, silently, leaving a bar of empty space."*
+          //
+          // ⚠️ Its values are the server's three, not labels invented here,
+          // and *Proved late* is never *Late* — the chip beside it owns that
+          // word for a wider set.
+          _Picker<Vocab>(
+            key: const Key('filter-arrival'),
+            label: 'Arrival today',
+            value: _arrivalOptions.where((a) => a.value == filters.arrival).firstOrNull,
+            options: _arrivalOptions,
+            labelOf: (arrival) => arrival.label,
+            onChanged: (arrival) => onChanged(
+              arrival == null
+                  ? filters.copyWith(clear: const {'arrival'})
+                  : filters.copyWith(arrival: arrival.value),
+            ),
+          ),
           if (!filters.isEmpty)
             Padding(
               padding: const EdgeInsets.only(left: 6),
@@ -521,3 +544,18 @@ class _Picker<T> extends StatelessWidget {
     );
   }
 }
+
+/// SPEC-038 — the arrival filter's three values, which are the ERP's own.
+///
+/// ⚠️ **Not a vocabulary call.** Every other picker here is fed from
+/// `lookup/vocabulary`, because statuses and priorities are the server's to
+/// name and change. These three are an **enum in the contract** — the server
+/// validates `arrival` against exactly them — so a round trip would buy
+/// nothing. 🔴 If the ERP ever gains a fourth arrival outcome, this list is
+/// where the app is behind, and the Dart act guard's reasoning applies: a
+/// declared list is a decision, a silent one is a defect.
+const _arrivalOptions = <Vocab>[
+  Vocab(value: 'in_time', label: 'In time'),
+  Vocab(value: 'late', label: 'Proved late'),
+  Vocab(value: 'not_recorded', label: 'Not recorded'),
+];
