@@ -323,9 +323,16 @@ void main() {
       // not, so `implementedActs` is now a mixed list — which is correct,
       // because these sets describe the BUILD and never a role. This
       // exercises Step 0's detector against that mixture.
+      // 🔧 **2026-11-20, SPEC-037: the mixture is now the other way round.**
+      // When this was written the manager's five were built and the
+      // technician's four were not. Phase 1 built three of those four, so the
+      // example moved to `request_materials` — the one act left. The point of
+      // the test is unchanged: `implementedActs` describes the BUILD and never
+      // a role, so a payload mixing a built act with an unbuilt one must
+      // enable exactly one button.
       await pump(tester, [
         act('verify', 'Verify the work'),
-        act('pause', 'Pause work'),
+        act('request_materials', 'Ask for parts'),
       ]);
 
       expect(
@@ -333,7 +340,7 @@ void main() {
         isNotNull,
       );
       expect(
-        tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Pause work')).onPressed,
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Ask for parts')).onPressed,
         isNull,
       );
     });

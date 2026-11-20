@@ -71,9 +71,16 @@ void main() {
     // the dispatcher implements neither, so the app drew two enabled buttons
     // that failed after the press. The server's answer is unchanged and
     // unquestioned; the app simply declines to offer what it has no code for.
-    await pump(tester, [act('pause', 'Pause work')]);
+    //
+    // 🔧 **2026-11-20, SPEC-037: the example had to change, and this test
+    // failing is what told us.** The case was written with `pause`, which
+    // Phase 1 implemented — so its pinned example became false and the suite
+    // said so at once. ✅ Rewritten, not deleted: `request_materials` is the
+    // one act still honestly unbuilt, and the day it ships this test must
+    // fail again and be pointed at whatever is last.
+    await pump(tester, [act('request_materials', 'Ask for parts')]);
 
-    final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Pause work'));
+    final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Ask for parts'));
 
     expect(button.onPressed, isNull);
     // ⚠️ It describes the APP, not the job. A technician told "you cannot do

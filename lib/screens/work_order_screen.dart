@@ -167,6 +167,36 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
     // يحتاج إلى approved وnote"*. It is the only one of the manager's five
     // that is not a single tap: two fields, one of which the domain
     // *requires* when the answer is no.
+    // 🔴 **SPEC-037 Phase 1 — stopping work needs a STATED CAUSE**, and the
+    // server refuses a blank one (`pause` validates `reason` as `required`).
+    // ✅ The existing reason sheet is reused rather than a fourth one written.
+    // ⚠️ **That is not the shared abstraction Q1 forbids**: a text sheet is a
+    // control, and what Q1 forbids is a shared *act* — `pause` moves a status
+    // and `request_extension` creates a request somebody else decides, and no
+    // code here treats the two as one thing.
+    if (act.value == 'pause') {
+      reason = await _askForReason(act);
+
+      if (reason == null || reason.trim().isEmpty) return;
+    }
+
+    // 🔴 **The request for time asks for BOTH fields, because the server
+    // requires both** (`minutes` and `reason`, `:329-331`). The Impact
+    // Analysis said *"no client validation beyond mirroring
+    // `integer|min:1|max:1440`"* and described half the form; a one-field
+    // sheet would have met a 422 the app could answer itself — the same
+    // mistake the reason dialogs already exist to avoid.
+    //
+    // ⚠️ `resume` deliberately has NO sheet. It is a single tap, like
+    // `arrive`: there is nothing to type to come back to work.
+    _TimeRequest? timeRequest;
+
+    if (act.value == 'request_extension') {
+      timeRequest = await _askForMoreTime();
+
+      if (timeRequest == null) return;
+    }
+
     _ExtensionDecision? decision;
 
     if (act.value == 'decide_extension') {
@@ -220,6 +250,18 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
       'refer' => await widget.repository.refer(widget.id, referredTo!.trim()),
       'confirm_referral' => await widget.repository.confirmReferral(widget.id),
 
+
+      // ─── SPEC-037 Phase 1 — the technician's three ───
+      //
+      // 🎯 These ARE queued, unlike the manager's six below: an interruption
+      // drained hours later is a record of what happened (ADR-022).
+      'pause' => await widget.repository.pause(widget.id, reason!.trim()),
+      'resume' => await widget.repository.resume(widget.id),
+      'request_extension' => await widget.repository.requestExtension(
+        widget.id,
+        minutes: timeRequest!.minutes,
+        reason: timeRequest.reason,
+      ),
       // ─── SPEC-024 Phase 5, Steps 2–3 — the Facility Manager's six ───
       //
       // ⚠️ None of these is queued: the repository sends them once. A
@@ -681,6 +723,84 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
   /// 🔴 **A refusal with no note is refused by the DOMAIN** (*"refusing more
   /// time requires a reason"*), so *Refuse* is disabled until something is
   /// typed. ✅ A grant may carry a note and need not.
+  /// SPEC-037 Phase 1 — **how much longer, and why.**
+  ///
+  /// 🔴 **Two required fields, because the server requires two.** `minutes`
+  /// mirrors `integer|min:1|max:1440` — a sanity bound and not a business
+  /// maximum, as `TheExtensionNeedsAnApproverTest` records — and `reason` is
+  /// `required` there too. *Ask* stays disabled until both are answerable, so
+  /// the technician is never handed a 422 for a form this screen could have
+  /// checked.
+  ///
+  /// ⚠️ **It is not the manager's dialog with different labels.** His decides
+  /// a request that exists; this one makes it. They share no type, and Q1 is
+  /// the reason: *"`pause`/`resume` move a status, `request_extension` creates
+  /// a pending request somebody else decides."*
+  Future<_TimeRequest?> _askForMoreTime() {
+    final minutes = TextEditingController();
+    final why = TextEditingController();
+
+    int? parsed() {
+      final value = int.tryParse(minutes.text.trim());
+
+      if (value == null || value < 1 || value > 1440) return null;
+
+      return value;
+    }
+
+    return showDialog<_TimeRequest>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Ask for more time'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                key: const Key('more-time-minutes-field'),
+                controller: minutes,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setDialogState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'How many more minutes?',
+                  hintText: 'e.g. 45',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('more-time-reason-field'),
+                controller: why,
+                maxLines: 2,
+                onChanged: (_) => setDialogState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Why?',
+                  hintText: 'e.g. the riser valve is seized',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              key: const Key('more-time-dismiss'),
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Not now'),
+            ),
+            TextButton(
+              key: const Key('more-time-confirm'),
+              onPressed: parsed() == null || why.text.trim().isEmpty
+                  ? null
+                  : () => Navigator.of(context).pop(
+                        _TimeRequest(minutes: parsed()!, reason: why.text.trim()),
+                      ),
+              child: const Text('Ask'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<_ExtensionDecision?> _askForExtensionDecision() {
     final controller = TextEditingController();
 
@@ -1114,6 +1234,14 @@ class _SlaLine extends StatelessWidget {
 /// ⚠️ A record would have done; a named class is used so that `approved` is
 /// never read positionally. `(true, 'note')` and `(false, 'note')` differ by
 /// one character at a call site and by everything in the ledger.
+/// SPEC-037 Phase 1 — what the technician asked for, before it is sent.
+class _TimeRequest {
+  const _TimeRequest({required this.minutes, required this.reason});
+
+  final int minutes;
+  final String reason;
+}
+
 class _ExtensionDecision {
   const _ExtensionDecision({required this.approved, this.note});
 

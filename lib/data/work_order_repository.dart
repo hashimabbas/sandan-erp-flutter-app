@@ -139,6 +139,26 @@ abstract interface class WorkOrderSource {
     DateTime? capturedAt,
   });
 
+
+  /// SPEC-037 Phase 1 — the three acts of the man standing in the room.
+  ///
+  /// 🔴🔴 **Queued, through `_act`, and that is the OPPOSITE call to the
+  /// manager's five below.** A manager's judgement drained hours later lands
+  /// on a job that has moved; an interruption drained hours later is a
+  /// **record of what happened**, which is exactly what the queue is for. The
+  /// two groups look alike and the reason they differ is the direction of
+  /// time: one decides the present, the other reports the past.
+  ///
+  /// ⚠️ The server requires a `reason` for a pause and BOTH `minutes` and
+  /// `reason` for a request for time (`FacilityWorkOrderWorkflowController`
+  /// `:206`, `:329-331`) — so neither is a single tap, and a one-field form
+  /// would meet a 422 the app could have answered itself.
+  Future<ActResult> pause(String jobId, String reason);
+
+  Future<ActResult> resume(String jobId);
+
+  Future<ActResult> requestExtension(String jobId, {required int minutes, required String reason});
+
   /// SPEC-024 Phase 5, Step 2 — the Facility Manager's five.
   ///
   /// 🔴🔴 **NONE of these is queued offline, and that is a decision against
@@ -393,6 +413,23 @@ class WorkOrderRepository implements WorkOrderSource {
     fileField: 'photo',
     parsesWorkOrder: false,
   );
+
+
+  // ───────────────────── the technician's three (SPEC-037) ─────────────────
+
+  @override
+  Future<ActResult> pause(String jobId, String reason) =>
+      _act(jobId, 'PATCH', 'pause', body: {'reason': reason});
+
+  @override
+  Future<ActResult> resume(String jobId) => _act(jobId, 'PATCH', 'resume');
+
+  @override
+  Future<ActResult> requestExtension(String jobId, {required int minutes, required String reason}) =>
+      // ⚠️ The suffix is `extension`, not the act's name `request_extension`.
+      // The route and the act disagree on purpose (`routes/api.php:128`), and
+      // mirroring the act's name here would 404.
+      _act(jobId, 'PATCH', 'extension', body: {'minutes': minutes, 'reason': reason});
 
   @override
   Future<int> pendingCount() => outbox.countFor(userId);

@@ -115,6 +115,29 @@ class FakeWorkOrderSource implements WorkOrderSource {
     return result;
   }
 
+  // ──────── the technician's three (SPEC-037 Phase 1) ────────
+
+  @override
+  Future<ActResult> pause(String jobId, String reason) async {
+    calls.add('pause:$jobId:$reason');
+
+    return result;
+  }
+
+  @override
+  Future<ActResult> resume(String jobId) async {
+    calls.add('resume:$jobId');
+
+    return result;
+  }
+
+  @override
+  Future<ActResult> requestExtension(String jobId, {required int minutes, required String reason}) async {
+    calls.add('extension:$jobId:$minutes:$reason');
+
+    return result;
+  }
+
   // ──────── the manager's six (SPEC-024 Phase 5 Steps 2–3) ────────
 
   @override

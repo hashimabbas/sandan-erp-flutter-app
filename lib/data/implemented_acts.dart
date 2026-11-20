@@ -44,6 +44,12 @@ const implementedActs = <String>{
   'cancel',
   'reject',
   'decide_extension',
+  // SPEC-037 Phase 1 — the technician's own three. 🎯 They were the oldest
+  // entries in the list below: shipped on the server by SPEC-031 and
+  // SPEC-028, with no caller on this phone until today.
+  'pause',
+  'resume',
+  'request_extension',
 };
 
 /// The acts the server offers that this build has no code for — **declared,
@@ -55,19 +61,22 @@ const implementedActs = <String>{
 /// arriving from the ERP fails that test until somebody either implements it
 /// or writes it down here.
 ///
-/// ⚠️ Hashim's Step 0 boundary (2026-11-18) keeps all four out of scope:
-/// *"لا توسع النطاق إلى تكاملات Pause/Resume أو Materials أو Extension في هذه
-/// المرحلة"*. They are listed so they are visible, not so they are forgotten.
+/// 🔧 **2026-11-20: the "all four" this comment described are now ONE.**
+/// Hashim's Step 0 boundary of 2026-11-18 — *"لا توسع النطاق إلى تكاملات
+/// Pause/Resume أو Materials أو Extension في هذه المرحلة"* — kept the four
+/// out of SPEC-024's scope, and SPEC-037 was opened to close them. Three
+/// closed in its Phase 1; the fourth is held, not forgotten.
 ///
-/// 🔧 **Phase 5 Step 2 leaves all four here and that is correct, not an
-/// inconsistency.** This build now performs the MANAGER's five while still
-/// not performing the technician's four — because these sets describe **the
-/// build**, never a role. A mixed list is the honest state of the app.
+/// 🎯 **These sets describe the BUILD, never a role.** That is why the list
+/// could honestly hold the manager's five as done while the technician's own
+/// three were not — and why it can now hold thirteen acts and one absence.
 const notYetImplementedActs = <String>{
-  'pause',
-  'resume',
+  // 🔧 **SPEC-037, 2026-11-20: four became ONE.** `pause`, `resume` and
+  // `request_extension` moved above when Phase 1 built them. What is left is
+  // the one act that is **blocked rather than unbuilt**: Phase 2 of SPEC-037
+  // is held on a question Hashim declined to turn into a decision, and until
+  // it is answered the app must not present a parts request it cannot shape.
   'request_materials',
-  'request_extension',
 };
 
 /// Whether this build can perform [act] at all.
