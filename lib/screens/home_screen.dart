@@ -15,7 +15,6 @@ import '../theme/app_colors.dart';
 import '../widgets/animated_gradient_background.dart';
 import '../widgets/task_row_tile.dart';
 import 'login_screen.dart';
-import 'profile_screen.dart';
 import 'queue_screen.dart';
 import 'work_order_screen.dart';
 import 'new_complaint_screen.dart';
@@ -31,9 +30,29 @@ import 'new_complaint_screen.dart';
 /// authorization change (Facility Manager-only complaint creation and the
 /// technician/worker My Work split are preserved exactly as before).
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.user, this.workOrderSource, this.complaintService});
+  const HomeScreen({
+    super.key,
+    required this.user,
+    this.workOrderSource,
+    this.complaintService,
+    this.onSignOut,
+    this.onSessionExpired,
+  });
 
   final FacilityUser user;
+
+  /// 🔴 **Sign-out belongs to `AppShell` and is passed in**, because the
+  /// Profile tab signs out too and the pending-queue warning (Phase 3 D8) must
+  /// have exactly ONE implementation — a second one that skipped the question
+  /// would be the warning's first bug.
+  ///
+  /// ⚠️ Null only in the widget tests that pump this screen on its own.
+  final Future<void> Function()? onSignOut;
+
+  /// Likewise for a 401: ending a session navigates with the ROOT navigator,
+  /// which this screen — living inside a tab's navigator — cannot reach
+  /// correctly on its own.
+  final VoidCallback? onSessionExpired;
 
   /// Injected by tests only (SPEC-024 Phase 2). A default source opens the
   /// real database, and a widget test must not perform real I/O — see
@@ -69,7 +88,18 @@ class _HomeScreenState extends State<HomeScreen> {
   ///
   /// 🎯 **It asks; it never refuses.** He may need to hand the phone over, and
   /// blocking a sign-out would make the app worse than the paper it replaces.
+  /// 🔧 **Delegated, not duplicated.** `AppShell` owns the one sign-out;
+  /// this screen's header menu is one of its two callers.
   Future<void> _handleLogout() async {
+    final delegated = widget.onSignOut;
+
+    if (delegated != null) {
+      await delegated();
+
+      return;
+    }
+
+    // Standalone (a widget test pumping this screen with no shell above it).
     final waiting = await _pendingCount();
 
     if (!mounted) return;
@@ -136,6 +166,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the wrong row would be a bug wearing a security badge. The service draws
   /// that line; this method only acts on the side of it that ends a session.
   Future<void> _handleSessionExpired() async {
+    final delegated = widget.onSessionExpired;
+
+    if (delegated != null) {
+      delegated();
+
+      return;
+    }
+
     await _authService.endExpiredSession();
     if (!mounted) return;
 
@@ -144,25 +182,6 @@ class _HomeScreenState extends State<HomeScreen> {
     ).showSnackBar(const SnackBar(content: Text('Your session has ended. Please sign in again.')));
 
     _toLogin();
-  }
-
-  Future<void> _openProfile() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProfileScreen(
-          user: widget.user,
-          source: _source,
-          // 🔴 One sign-out, not two. `_handleLogout` owns the pending-queue
-          // question (Phase 3 D8), and a second implementation that skipped
-          // that question would be the warning's first bug.
-          onSignOut: _handleLogout,
-        ),
-      ),
-    );
-
-    // The queue may have drained while he was in there, and the markers on the
-    // list are read from it.
-    if (mounted) setState(() {});
   }
 
   void _toLogin() {
@@ -191,52 +210,8 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$feature — coming soon')));
   }
 
-  /// 🔧 **`Work` and `Complaints` were not broken — they were never
-  /// wired.** Both called `_notImplemented` and answered *"coming soon"*, and
-  /// the screen each one needed had already shipped: the queue in SPEC-024
-  /// Phase 5 Step 1.
-  void _openWork() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => QueueScreen(
-          userId: widget.user.id,
-          onSessionExpired: _handleSessionExpired,
-        ),
-      ),
-    );
-  }
 
-  /// 🔴 **A complaint and a work order are the SAME ROW in this system.**
-  /// `GET /api/facility/work-orders` reads the `complaints` table and there is
-  /// **no complaints-list endpoint** — measured, not assumed. So this tab is
-  /// the same screen asking a different question: `status: 'new'`, the
-  /// complaints that exist and are nobody's work yet, which is the intake the
-  /// Facility Manager actually handles.
-  ///
-  /// ⚠️ The filter bar is still there, so he can widen it to every status
-  /// without leaving the tab.
-  void _openComplaints() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => QueueScreen(
-          userId: widget.user.id,
-          onSessionExpired: _handleSessionExpired,
-          initialFilters: const QueueFilters(status: 'new'),
-          title: 'Complaints',
-          onRaiseComplaint: _canCreateComplaint
-              ? () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => NewComplaintScreen(userId: widget.user.id)),
-                )
-              : null,
-        ),
-      ),
-    );
-  }
 
-  /// Only the Facility Manager holds `facility.complaints.create` in this app,
-  /// so the raise button is **absent** for everyone else rather than present
-  /// and refused.
-  bool get _canCreateComplaint => widget.user.role == FacilityRole.facilityManager;
 
   @override
   Widget build(BuildContext context) {
@@ -284,12 +259,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: _BottomNavBar(
-        onWork: _openWork,
-        onComplaints: _openComplaints,
-        onProfile: _openProfile,
-        isFieldRole: _isFieldRole,
-      ),
+      // 🔧 **No bottom bar here any more: `AppShell` owns it.** This screen
+      // used to carry the bar AND push the other destinations over itself,
+      // which is why the bar vanished on the screen it had just opened. The
+      // padding below the content stays, because the shell's bar floats over
+      // this tab with `extendBody`.
     );
   }
 
@@ -1473,135 +1447,3 @@ class _WorkListMessage extends StatelessWidget {
 /// 🎯 A tab that duplicates the screen under it is worse than a missing
 /// one: it teaches a technician that tapping "Work" is how he reaches his
 /// work, and then refuses.
-/// The bottom bar, which until 2026-11-21 was **three labels and one working
-/// button**.
-///
-/// 🔧 **`Work` and `Complaints` both called *"coming soon"*** while the
-/// screens they needed were already shipped. They now open the queue and the
-/// intake, and `Profile` keeps the one it got in Phase 4.
-///
-/// ⚠️ **The highlight no longer lies.** It was hardcoded to `i == 0`, so
-/// every item rendered as if Home were selected — including the three that did
-/// nothing. This bar belongs to Home and the other items PUSH a screen over it,
-/// so Home is genuinely the current one and the rest are doors: they carry an
-/// icon and a label and no selected state at all.
-class _BottomNavBar extends StatelessWidget {
-  const _BottomNavBar({
-    required this.onWork,
-    required this.onComplaints,
-    required this.onProfile,
-    required this.isFieldRole,
-  });
-
-  final VoidCallback onWork;
-  final VoidCallback onComplaints;
-  final VoidCallback onProfile;
-
-  /// For a technician or a worker, Home IS My Work.
-  ///
-  /// 🔴 **And `Complaints` is hidden for them too, by measurement.** A
-  /// field account holds no `facility.complaints.create`, and the queue
-  /// endpoint returns **only his own assigned jobs** — so a `status: 'new'`
-  /// list is empty for him *by construction*. An empty tab is worse than no
-  /// tab; his work is on Home, where it belongs.
-  final bool isFieldRole;
-
-  @override
-  Widget build(BuildContext context) {
-    final items = <_NavItem>[
-      const _NavItem(icon: Icons.space_dashboard_rounded, label: 'Home', isCurrent: true),
-      if (!isFieldRole) _NavItem(icon: Icons.assignment_rounded, label: 'Work', onTap: onWork),
-      if (!isFieldRole)
-        _NavItem(icon: Icons.report_problem_rounded, label: 'Complaints', onTap: onComplaints),
-      _NavItem(icon: Icons.person_rounded, label: 'Profile', onTap: onProfile),
-    ];
-
-    return SafeArea(
-      top: false,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        decoration: BoxDecoration(
-          // A lighter fill over the dark gradient, with a hairline edge: the
-          // bar reads as floating chrome rather than a block at the bottom.
-          color: AppColors.surfaceElevated.withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(26),
-          border: Border.all(color: AppColors.glassBorder, width: 0.6),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.45),
-              blurRadius: 28,
-              spreadRadius: -4,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            for (final item in items)
-              Expanded(
-                child: _NavButton(item: item),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NavItem {
-  const _NavItem({
-    required this.icon,
-    required this.label,
-    this.onTap,
-    this.isCurrent = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-  final bool isCurrent;
-}
-
-class _NavButton extends StatelessWidget {
-  const _NavButton({required this.item});
-
-  final _NavItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = item.isCurrent ? AppColors.accentSoft : AppColors.textMuted;
-
-    return InkWell(
-      key: Key('nav-${item.label.toLowerCase()}'),
-      onTap: item.onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: item.isCurrent ? AppColors.accent.withValues(alpha: 0.16) : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(item.icon, size: 21, color: color),
-            const SizedBox(height: 4),
-            Text(
-              item.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10.5,
-                fontWeight: item.isCurrent ? FontWeight.w700 : FontWeight.w600,
-                letterSpacing: 0.1,
-                color: color,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

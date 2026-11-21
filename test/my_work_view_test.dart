@@ -169,22 +169,9 @@ void main() {
     expect(find.textContaining('have not been sent'), findsNothing);
   });
 
-  testWidgets('✅ the Profile tab opens the account screen instead of saying "coming soon"', (tester) async {
-    source.list = ApiSuccess(Cached(
-      oneJob(),
-      source: WorkSource.network,
-      syncedAt: DateTime(2026, 10, 28, 9, 5),
-    ));
-
-    await pump(tester);
-
-    await tester.tap(find.text('Profile'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.text('Account'), findsOneWidget);
-    // ⚠️ And `Complaints` still says it, on purpose: that is the Facility
-    // Manager's surface (Phase 5), deferred rather than forgotten.
-    expect(find.text('Sandan Facility 1.0.0+1'), findsOneWidget);
-  });
+  // 🔧 **Moved 2026-11-21 to `the_bottom_bar_opens_what_it_names_test.dart`.**
+  // *"the Profile tab opens the account screen"* was asserted by pumping this
+  // screen alone and tapping a label in a bar this screen used to own. The bar
+  // belongs to `AppShell` now — a tab shell, not a row of buttons on Home — so
+  // the assertion lives with the shell, where the tab actually is.
 }

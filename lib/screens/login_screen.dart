@@ -9,7 +9,7 @@ import '../widgets/glass_card.dart';
 import '../widgets/premium_button.dart';
 import '../widgets/premium_text_field.dart';
 import 'forgot_password_screen.dart';
-import 'home_screen.dart';
+import 'app_shell.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -102,7 +102,7 @@ class _LoginScreenState extends State<LoginScreen>
     }
 
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => HomeScreen(user: result.user!)),
+      MaterialPageRoute(builder: (_) => AppShell(user: result.user!)),
       (route) => false,
     );
   }

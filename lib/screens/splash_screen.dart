@@ -3,7 +3,7 @@ import '../services/auth_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/animated_gradient_background.dart';
 import '../widgets/brand_logo.dart';
-import 'home_screen.dart';
+import 'app_shell.dart';
 import 'login_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -54,7 +54,7 @@ class _SplashScreenState extends State<SplashScreen>
     final user = await sessionFuture;
     if (!mounted) return;
 
-    final destination = user == null ? const LoginScreen() : HomeScreen(user: user);
+    final destination = user == null ? const LoginScreen() : AppShell(user: user);
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
