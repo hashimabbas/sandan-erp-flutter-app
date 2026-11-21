@@ -191,6 +191,53 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$feature — coming soon')));
   }
 
+  /// 🔧 **`Work` and `Complaints` were not broken — they were never
+  /// wired.** Both called `_notImplemented` and answered *"coming soon"*, and
+  /// the screen each one needed had already shipped: the queue in SPEC-024
+  /// Phase 5 Step 1.
+  void _openWork() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => QueueScreen(
+          userId: widget.user.id,
+          onSessionExpired: _handleSessionExpired,
+        ),
+      ),
+    );
+  }
+
+  /// 🔴 **A complaint and a work order are the SAME ROW in this system.**
+  /// `GET /api/facility/work-orders` reads the `complaints` table and there is
+  /// **no complaints-list endpoint** — measured, not assumed. So this tab is
+  /// the same screen asking a different question: `status: 'new'`, the
+  /// complaints that exist and are nobody's work yet, which is the intake the
+  /// Facility Manager actually handles.
+  ///
+  /// ⚠️ The filter bar is still there, so he can widen it to every status
+  /// without leaving the tab.
+  void _openComplaints() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => QueueScreen(
+          userId: widget.user.id,
+          onSessionExpired: _handleSessionExpired,
+          initialFilters: const QueueFilters(status: 'new'),
+          title: 'Complaints',
+          onRaiseComplaint: _canCreateComplaint
+              ? () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => NewComplaintScreen(userId: widget.user.id)),
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+
+  /// Only the Facility Manager holds `facility.complaints.create` in this app,
+  /// so the raise button is **absent** for everyone else rather than present
+  /// and refused.
+  bool get _canCreateComplaint => widget.user.role == FacilityRole.facilityManager;
+
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
@@ -238,7 +285,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       bottomNavigationBar: _BottomNavBar(
-        onOtherTap: _notImplemented,
+        onWork: _openWork,
+        onComplaints: _openComplaints,
         onProfile: _openProfile,
         isFieldRole: _isFieldRole,
       ),
@@ -279,6 +327,16 @@ class _Header extends StatelessWidget {
   final String dateLabel;
   final VoidCallback onLogout;
 
+  /// The greeting the hour actually warrants, in the device's own local time.
+  static String get _greeting {
+    final hour = DateTime.now().hour;
+
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+
+    return 'Good evening';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -289,27 +347,57 @@ class _Header extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // 🔧 **It said *"Good morning"* at every hour of the day.** A
+              // greeting that is wrong two thirds of the time is worse than no
+              // greeting: it tells the user the screen is not paying
+              // attention.
               Text(
-                'Good morning, $name 👋',
+                '$_greeting, $name',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: AppColors.textPrimary,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w700,
-                  height: 1.2,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  height: 1.15,
+                  letterSpacing: -0.3,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '$roleLabel · $dateLabel',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                ),
+              const SizedBox(height: 5),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Text(
+                      roleLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.accentSoft,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      dateLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -380,27 +468,49 @@ class _ProfileButton extends StatelessWidget {
 // ─────────────────────────── Section title ───────────────────────────
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.title);
+  const _SectionTitle(this.title, {this.trailing});
 
   final String title;
+
+  /// A quiet hint on the right — how to use the section, never a number.
+  final String? trailing;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          Container(
+            width: 3,
+            height: 13,
+            margin: const EdgeInsets.only(right: 8),
+            decoration: BoxDecoration(
+              gradient: AppColors.accentGradient,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           Expanded(
             child: Text(
               title.toUpperCase(),
               style: const TextStyle(
                 color: AppColors.textSecondary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.6,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.9,
               ),
             ),
           ),
+          if (trailing != null)
+            Text(
+              trailing!,
+              style: const TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
         ],
       ),
     );
@@ -497,7 +607,15 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle('Quick Action'),
+        // 🎯 **The figures come FIRST now.** A manager opens this app to
+        // learn the state of his day, not to file something: the four numbers
+        // answer *"what is happening?"* and the actions answer *"what shall I
+        // do?"*. Leading with the actions made him scroll past the question to
+        // reach the answer.
+        const _SectionTitle('Right now', trailing: 'Tap a figure to open it'),
+        _figures(),
+        const SizedBox(height: 26),
+        const _SectionTitle('Act'),
         _PrimaryActionCard(
           title: 'New Complaint',
           subtitle: 'Report a facility issue',
@@ -508,20 +626,18 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
                 )
               : () => widget.onAction('New Complaint'),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         // 🎯 **SPEC-024 Phase 5, Step 1 — the manager's own work finally has
-        // a door.** Until now this screen offered him one action (raise a
-        // complaint) and a notice that everything else lives in the browser.
-        _PrimaryActionCard(
+        // a door.** ⚠️ A SECOND gradient card competed with the first for the
+        // eye; the queue is a destination, so it reads as a quiet surface with
+        // a chevron while the one CREATING something keeps the gradient.
+        _SecondaryActionCard(
           key: const Key('open-work-queue'),
           title: 'Work Queue',
           subtitle: 'Filter by status, priority, building, category or technician',
           icon: Icons.filter_list_rounded,
           onTap: _openQueue,
         ),
-        const SizedBox(height: 28),
-        const _SectionTitle('Right now'),
-        _figures(),
         const SizedBox(height: 28),
       ],
     );
@@ -595,6 +711,10 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
     // outcomes, and any single integer must either drop *not recorded*
     // (understating) or absorb it (the conflation this project retired). The
     // second is that four tiles already fill a phone's width.
+    // ⚠️ **A 2×2 grid, not four tiles in one row.** On a phone four tiles
+    // left each about 80 logical pixels — *"Late to assign"* wrapped to three
+    // lines next to a 22px number. The grain of the data did not change; the
+    // room each figure gets did.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -604,6 +724,8 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
             key: const Key('figure-open'),
             label: 'Open',
             value: summary.open,
+            icon: Icons.inbox_rounded,
+            tone: AppColors.accentSoft,
             onTap: _openQueue,
           ),
           const SizedBox(width: 10),
@@ -611,13 +733,21 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
             key: const Key('figure-in-progress'),
             label: 'In progress',
             value: summary.inProgress,
+            icon: Icons.bolt_rounded,
+            tone: AppColors.info,
             onTap: () => _openQueue(filters: const QueueFilters(status: 'in_progress')),
           ),
-          const SizedBox(width: 10),
+        ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+        children: [
           _FigureTile(
             key: const Key('figure-completed-today'),
             label: 'Done today',
             value: summary.completedToday,
+            icon: Icons.task_alt_rounded,
+            tone: AppColors.success,
             onTap: () => _openQueue(filters: const QueueFilters(status: 'completed')),
           ),
           const SizedBox(width: 10),
@@ -630,6 +760,8 @@ class _ManagerDashboardViewState extends State<_ManagerDashboardView> {
             key: const Key('figure-overdue'),
             label: 'Late to assign',
             value: summary.overdueAssignment,
+            icon: Icons.timer_outlined,
+            tone: AppColors.warning,
             onTap: () => _openQueue(filters: const QueueFilters(breached: true)),
           ),
         ],
@@ -772,46 +904,166 @@ class _ArrivalPart extends StatelessWidget {
 }
 
 /// SPEC-024 Phase 5, Step 4 — one figure, and a door into the list behind it.
+/// One of the manager's four figures.
+///
+/// 🔴 **A figure here is a DOOR, never a decoration** — every tile opens the
+/// queue already asking the same question it answers, so the number and the
+/// list can never disagree.
+///
+/// ⚠️ The tone is a hint, not a judgement: the server decides what *late*
+/// means, and this widget only colours the badge.
 class _FigureTile extends StatelessWidget {
   const _FigureTile({
     super.key,
     required this.label,
     required this.value,
+    required this.icon,
+    required this.tone,
     required this.onTap,
   });
 
   final String label;
   final int value;
+  final IconData icon;
+  final Color tone;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Ink(
+            padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppColors.divider, width: 0.8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: tone.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(icon, size: 17, color: tone),
+                    ),
+                    const Spacer(),
+                    Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted.withValues(alpha: 0.7)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '$value',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    height: 1.0,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  label,
+                  maxLines: 2,
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A destination, as opposed to `_PrimaryActionCard`, which CREATES something.
+///
+/// ⚠️ Two gradient cards competed for the eye; the one that files a
+/// complaint keeps the gradient and this one reads as quiet chrome.
+class _SecondaryActionCard extends StatelessWidget {
+  const _SecondaryActionCard({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
       child: InkWell(
+        borderRadius: BorderRadius.circular(18),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
           decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.divider, width: 0.8),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Text(
-                '$value',
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(icon, color: AppColors.accentSoft, size: 21),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5, height: 1.3),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3),
-              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted, size: 20),
             ],
           ),
         ),
@@ -822,7 +1074,6 @@ class _FigureTile extends StatelessWidget {
 
 class _PrimaryActionCard extends StatelessWidget {
   const _PrimaryActionCard({
-    super.key,
     required this.title,
     required this.subtitle,
     required this.icon,
@@ -1222,83 +1473,132 @@ class _WorkListMessage extends StatelessWidget {
 /// 🎯 A tab that duplicates the screen under it is worse than a missing
 /// one: it teaches a technician that tapping "Work" is how he reaches his
 /// work, and then refuses.
+/// The bottom bar, which until 2026-11-21 was **three labels and one working
+/// button**.
+///
+/// 🔧 **`Work` and `Complaints` both called *"coming soon"*** while the
+/// screens they needed were already shipped. They now open the queue and the
+/// intake, and `Profile` keeps the one it got in Phase 4.
+///
+/// ⚠️ **The highlight no longer lies.** It was hardcoded to `i == 0`, so
+/// every item rendered as if Home were selected — including the three that did
+/// nothing. This bar belongs to Home and the other items PUSH a screen over it,
+/// so Home is genuinely the current one and the rest are doors: they carry an
+/// icon and a label and no selected state at all.
 class _BottomNavBar extends StatelessWidget {
   const _BottomNavBar({
-    required this.onOtherTap,
+    required this.onWork,
+    required this.onComplaints,
     required this.onProfile,
     required this.isFieldRole,
   });
 
-  final void Function(String feature) onOtherTap;
-
-  /// ✅ SPEC-024 Phase 4 — `Profile` stops saying *coming soon*.
-  /// ⚠️ `Complaints` still does: it is the Facility Manager's surface
-  /// (Phase 5), deferred on purpose and not forgotten.
+  final VoidCallback onWork;
+  final VoidCallback onComplaints;
   final VoidCallback onProfile;
 
   /// For a technician or a worker, Home IS My Work.
+  ///
+  /// 🔴 **And `Complaints` is hidden for them too, by measurement.** A
+  /// field account holds no `facility.complaints.create`, and the queue
+  /// endpoint returns **only his own assigned jobs** — so a `status: 'new'`
+  /// list is empty for him *by construction*. An empty tab is worse than no
+  /// tab; his work is on Home, where it belongs.
   final bool isFieldRole;
-
-  List<(IconData, String)> get _items => [
-    const (Icons.home_rounded, 'Home'),
-    if (!isFieldRole) const (Icons.assignment_outlined, 'Work'),
-    const (Icons.report_problem_outlined, 'Complaints'),
-    const (Icons.person_outline, 'Profile'),
-  ];
 
   @override
   Widget build(BuildContext context) {
+    final items = <_NavItem>[
+      const _NavItem(icon: Icons.space_dashboard_rounded, label: 'Home', isCurrent: true),
+      if (!isFieldRole) _NavItem(icon: Icons.assignment_rounded, label: 'Work', onTap: onWork),
+      if (!isFieldRole)
+        _NavItem(icon: Icons.report_problem_rounded, label: 'Complaints', onTap: onComplaints),
+      _NavItem(icon: Icons.person_rounded, label: 'Profile', onTap: onProfile),
+    ];
+
     return SafeArea(
       top: false,
       child: Container(
-        margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
-          color: AppColors.surfaceElevated,
-          borderRadius: BorderRadius.circular(22),
+          // A lighter fill over the dark gradient, with a hairline edge: the
+          // bar reads as floating chrome rather than a block at the bottom.
+          color: AppColors.surfaceElevated.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: AppColors.glassBorder, width: 0.6),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.35),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 28,
+              spreadRadius: -4,
+              offset: const Offset(0, 12),
             ),
           ],
         ),
         child: Row(
           children: [
-            for (var i = 0; i < _items.length; i++)
+            for (final item in items)
               Expanded(
-                child: InkWell(
-                  onTap: switch (_items[i].$2) {
-                    'Home' => null,
-                    'Profile' => onProfile,
-                    final other => () => onOtherTap(other),
-                  },
-                  borderRadius: BorderRadius.circular(16),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _items[i].$1,
-                          size: 22,
-                          color: i == 0 ? AppColors.accentSoft : AppColors.textMuted,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _items[i].$2,
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                            color: i == 0 ? AppColors.accentSoft : AppColors.textMuted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                child: _NavButton(item: item),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem {
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    this.onTap,
+    this.isCurrent = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool isCurrent;
+}
+
+class _NavButton extends StatelessWidget {
+  const _NavButton({required this.item});
+
+  final _NavItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = item.isCurrent ? AppColors.accentSoft : AppColors.textMuted;
+
+    return InkWell(
+      key: Key('nav-${item.label.toLowerCase()}'),
+      onTap: item.onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: item.isCurrent ? AppColors.accent.withValues(alpha: 0.16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(item.icon, size: 21, color: color),
+            const SizedBox(height: 4),
+            Text(
+              item.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: item.isCurrent ? FontWeight.w700 : FontWeight.w600,
+                letterSpacing: 0.1,
+                color: color,
+              ),
+            ),
           ],
         ),
       ),

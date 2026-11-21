@@ -42,6 +42,8 @@ class QueueScreen extends StatefulWidget {
     this.repository,
     this.service,
     this.initialFilters = const QueueFilters(),
+    this.title = 'Work Queue',
+    this.onRaiseComplaint,
   });
 
   final int userId;
@@ -53,6 +55,25 @@ class QueueScreen extends StatefulWidget {
   /// question the user could have asked with the controls, and the server
   /// answers it. The filter bar shows the choice, so he can widen it.
   final QueueFilters initialFilters;
+
+  /// What this screen is called when it is opened as something other than the
+  /// queue.
+  ///
+  /// 🎯 **The Complaints tab opens THIS screen** with `status: 'new'`,
+  /// because in this system a complaint and a work order are **the same row**:
+  /// `GET /api/facility/work-orders` reads the `complaints` table, and there is
+  /// no complaints-list endpoint at all. A second list in Dart would have been
+  /// a second answer to a question the server already answers — and it would
+  /// have needed its own pagination, its own filters and its own offline
+  /// refusal, all of which this screen already has and has tests for.
+  final String title;
+
+  /// Shown as a floating action when the viewer may raise a complaint.
+  ///
+  /// ⚠️ **Null is the normal case.** Only the Facility Manager holds
+  /// `facility.complaints.create` in this app, so the button is absent rather
+  /// than present-and-refused.
+  final VoidCallback? onRaiseComplaint;
 
   /// Injected by tests only.
   final WorkOrderSource? repository;
@@ -218,7 +239,7 @@ class _QueueScreenState extends State<QueueScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Work Queue'),
+        title: Text(widget.title),
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -244,6 +265,16 @@ class _QueueScreenState extends State<QueueScreen> {
           Expanded(child: _body()),
         ],
       ),
+      floatingActionButton: widget.onRaiseComplaint == null
+          ? null
+          : FloatingActionButton.extended(
+              key: const Key('raise-complaint'),
+              onPressed: widget.onRaiseComplaint,
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New complaint'),
+            ),
     );
   }
 
