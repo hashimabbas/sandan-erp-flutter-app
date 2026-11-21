@@ -866,20 +866,31 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 20, 0),
+                padding: const EdgeInsets.fromLTRB(6, 6, 12, 0),
                 child: Row(
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back_rounded, color: AppColors.textPrimary),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
-                    const Text(
-                      'Work Order',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
+                    const Expanded(
+                      child: Text(
+                        'Work Order',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
                       ),
+                    ),
+                    // 🎯 A refresh in reach. The freshness line below tells him
+                    // the copy may be stale; until now it told him that and
+                    // offered nothing to do about it.
+                    IconButton(
+                      tooltip: 'Refresh',
+                      icon: const Icon(Icons.refresh_rounded, color: AppColors.textSecondary),
+                      onPressed: _loading ? null : _load,
                     ),
                   ],
                 ),
@@ -922,81 +933,45 @@ class _WorkOrderScreenState extends State<WorkOrderScreen> {
     final job = _job!;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 36),
       children: [
-        Row(
-          children: [
-            StatusChip(status: job.status),
-            const SizedBox(width: 8),
-            Text(
-              job.priority.label,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        if (job.reference != null)
-          Text(
-            job.reference!,
-            style: const TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        const SizedBox(height: 6),
-        Text(
-          job.description,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, height: 1.5),
-        ),
-        const SizedBox(height: 22),
-        _Field('Location', job.location),
-        _Field('Category', [job.category, job.subcategory].whereType<String>().join(' · ')),
-        _Field(
-          // §9.9: several technicians, none ranked above another. The pivot
-          // carries no `is_lead`, so this must not imply an order.
-          job.technicians.length == 1 ? 'Assigned to' : 'Assigned to (${job.technicians.length})',
-          job.technicians.isEmpty
-              ? 'Nobody'
-              : job.technicians.map((t) => t.name).join(', '),
-        ),
-        const SizedBox(height: 10),
+        // 🎯 **The job itself, as one card.** The status, what it is and
+        // where — the three things a man standing in a corridor needs before
+        // he reads anything else. It used to be a bare row of text with the
+        // description floating under it.
+        _HeroCard(job: job),
+        const SizedBox(height: 12),
+        _DetailsCard(job: job),
+        const SizedBox(height: 12),
         _SlaPanel(sla: job.sla),
-        const SizedBox(height: 18),
+        const SizedBox(height: 12),
         // 🔴 D5: a cached job says so. The SLA panel above is read from
         // the server's own booleans, and a stale one could be hours old —
         // presenting it as current is the defect that put a permanent
         // "SLA BREACHED" on a finished job.
         if (_staleNotice != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              '${_staleNotice!} Showing the copy saved${_syncedLabel()} on this phone.',
-              style: const TextStyle(color: AppColors.warning, fontSize: 11.5),
-            ),
+          _NoticeLine(
+            icon: Icons.cloud_off_rounded,
+            tone: AppColors.warning,
+            // ⚠️ The sentence is unchanged, to the character: a test pins it,
+            // and more importantly a man reads it.
+            text: '${_staleNotice!} Showing the copy saved${_syncedLabel()} on this phone.',
           )
         else if (_syncedAt != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              'Updated${_syncedLabel()}.',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5),
-            ),
+          _NoticeLine(
+            icon: Icons.schedule_rounded,
+            tone: AppColors.textMuted,
+            text: 'Updated${_syncedLabel()}.',
           ),
         // ⚠️ The "read-only for now" line is GONE. It would now be false, and
         // a stale reassurance is worse than none.
         if (_pendingNotice != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              _pendingNotice!,
-              style: const TextStyle(color: AppColors.warning, fontSize: 12.5),
-            ),
+          _NoticeLine(
+            icon: Icons.upload_rounded,
+            tone: AppColors.warning,
+            text: _pendingNotice!,
           ),
+        const SizedBox(height: 6),
         _ActionsPanel(
           actions: job.actions,
           busy: _acting,
@@ -1034,9 +1009,31 @@ class _ActionsPanel extends StatelessWidget {
       );
     }
 
+    // 🎯 **The first act he can actually perform is the PRIMARY one.** A
+    // column of identical buttons made *"Start work"* and *"Waiting on a
+    // provider"* look like the same kind of decision. ⚠️ It is a matter of
+    // weight only: the order is the server's, and nothing is hidden or
+    // reordered — the app must not have an opinion about which act matters.
+    final primary = actions
+        .where((act) => act.allowed && thisBuildPerforms(act.value))
+        .map((act) => act.value)
+        .firstOrNull;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Padding(
+          padding: EdgeInsets.only(left: 2, bottom: 10),
+          child: Text(
+            'WHAT YOU CAN DO',
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.9,
+            ),
+          ),
+        ),
         for (final act in actions)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -1053,6 +1050,23 @@ class _ActionsPanel extends StatelessWidget {
                   onPressed: act.allowed && !busy && thisBuildPerforms(act.value)
                       ? () => onAct(act)
                       : null,
+                  // ⚠️ Still a `FilledButton` with the same label: four test
+                  // files find these by `widgetWithText(FilledButton, ...)`
+                  // and read `onPressed`, which is how *"drawn enabled and
+                  // failing after the press"* is kept from returning.
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50),
+                    backgroundColor:
+                        act.value == primary ? AppColors.accent : AppColors.surfaceElevated,
+                    foregroundColor:
+                        act.value == primary ? Colors.white : AppColors.textPrimary,
+                    disabledBackgroundColor: AppColors.surface,
+                    disabledForegroundColor: AppColors.textMuted,
+                    elevation: act.value == primary ? 6 : 0,
+                    shadowColor: AppColors.accent.withValues(alpha: 0.45),
+                    textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  ),
                   child: Text(act.label),
                 ),
                 // The build's own limit is reported ahead of the server's
@@ -1060,21 +1074,9 @@ class _ActionsPanel extends StatelessWidget {
                 // server's sentence describes a decision that was never
                 // reached.
                 if (!thisBuildPerforms(act.value))
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4, left: 2),
-                    child: Text(
-                      thisBuildCannot,
-                      style: TextStyle(color: AppColors.textMuted, fontSize: 11),
-                    ),
-                  )
+                  const _ActReason(thisBuildCannot)
                 else if (!act.allowed && act.reason != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, left: 2),
-                    child: Text(
-                      act.reason!,
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
-                    ),
-                  ),
+                  _ActReason(act.reason!),
               ],
             ),
           ),
@@ -1083,32 +1085,251 @@ class _ActionsPanel extends StatelessWidget {
   }
 }
 
-class _Field extends StatelessWidget {
-  const _Field(this.label, this.value);
+/// Why an act is not available — **the server's own sentence**, or this
+/// build's limit.
+///
+/// ⚠️ The text is passed through untouched: `find.text(...)` pins several of
+/// these reasons, and they are the only explanation a man gets for a button he
+/// cannot press.
+class _ActReason extends StatelessWidget {
+  const _ActReason(this.text);
 
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline_rounded, size: 13, color: AppColors.textMuted),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// **The job, as one card.**
+///
+/// 🔴 **The status label is rendered ONCE on this screen**, and that is a
+/// constraint rather than a style: the acts' tests look for `Assigned` or
+/// `In progress` with `findsOneWidget`, and a second copy of it anywhere here
+/// would make a true screen fail its own tests.
+class _HeroCard extends StatelessWidget {
+  const _HeroCard({required this.job});
+
+  final WorkOrder job;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.surfaceElevated,
+            AppColors.surface,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppColors.glassBorder, width: 0.7),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              StatusChip(status: job.status),
+              const SizedBox(width: 8),
+              // The priority as a pill rather than loose grey text: it is a
+              // classification, and it reads as one.
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.glassFill,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: Text(
+                  job.priority.label,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (job.reference != null)
+                Text(
+                  job.reference!,
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            job.description,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 17,
+              height: 1.45,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Where it is, what it is, and whose it is — one card, one row each.
+class _DetailsCard extends StatelessWidget {
+  const _DetailsCard({required this.job});
+
+  final WorkOrder job;
+
+  @override
+  Widget build(BuildContext context) {
+    final category = [job.category, job.subcategory].whereType<String>().join(' · ');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.divider, width: 0.8),
+      ),
+      child: Column(
+        children: [
+          _InfoRow(icon: Icons.place_outlined, label: 'Location', value: job.location),
+          _InfoRow(icon: Icons.handyman_outlined, label: 'Category', value: category),
+          _InfoRow(
+            icon: Icons.person_outline_rounded,
+            // §9.9: several technicians, none ranked above another. The pivot
+            // carries no `is_lead`, so this must not imply an order.
+            label: job.technicians.length == 1
+                ? 'Assigned to'
+                : 'Assigned to (${job.technicians.length})',
+            value: job.technicians.isEmpty ? 'Nobody' : job.technicians.map((t) => t.name).join(', '),
+            // ⚠️ "Nobody" is a fact worth seeing, not a blank.
+            tone: job.technicians.isEmpty ? AppColors.warning : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.tone,
+  });
+
+  final IconData icon;
   final String label;
   final String value;
+  final Color? tone;
 
   @override
   Widget build(BuildContext context) {
     if (value.isEmpty) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
+          Icon(icon, size: 17, color: AppColors.textMuted),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: tone ?? AppColors.textPrimary,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 3),
-          Text(value, style: const TextStyle(color: AppColors.textPrimary, fontSize: 13.5)),
+        ],
+      ),
+    );
+  }
+}
+
+/// One line of state: freshness, or an unsent act.
+///
+/// ⚠️ **The sentences are unchanged.** This widget gives them an icon and a
+/// readable colour; it does not rewrite a word, because each one was written
+/// to say exactly what it says.
+class _NoticeLine extends StatelessWidget {
+  const _NoticeLine({required this.icon, required this.tone, required this.text});
+
+  final IconData icon;
+  final Color tone;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: tone),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: tone, fontSize: 11.5, height: 1.4),
+            ),
+          ),
         ],
       ),
     );
@@ -1144,16 +1365,28 @@ class _SlaPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            breached ? 'SLA BREACHED' : 'SLA',
-            style: TextStyle(
-              color: breached ? AppColors.error : AppColors.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-            ),
+          Row(
+            children: [
+              Icon(
+                breached ? Icons.warning_amber_rounded : Icons.timer_outlined,
+                size: 15,
+                color: breached ? AppColors.error : AppColors.textMuted,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                // ⚠️ Both words are unchanged: the breach is the server's
+                // judgement and this panel only reports it.
+                breached ? 'SLA BREACHED' : 'SLA',
+                style: TextStyle(
+                  color: breached ? AppColors.error : AppColors.textMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           if (sla.cycleNumber == null)
             // ⚠️ A job with no cycle is not a job with no data — the server
             // sends the whole shape with nulls, so this states the fact
@@ -1208,19 +1441,50 @@ class _SlaLine extends StatelessWidget {
             ? 'due ${clock(due!)}'
             : 'not recorded';
 
+    // 🎯 Met, late, or waiting — three states, and a man can tell them
+    // apart at a glance. ⚠️ The JUDGEMENT is still the server's `breached`
+    // boolean; the colour is a reading of it, never a second opinion.
+    final tone = breached
+        ? AppColors.error
+        : met != null
+            ? AppColors.success
+            : AppColors.textSecondary;
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          Expanded(
-            child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
+          Container(
+            width: 7,
+            height: 7,
+            margin: const EdgeInsets.only(right: 9),
+            decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              color: breached ? AppColors.error : AppColors.textPrimary,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: tone.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              // ⚠️ The three strings are untouched: 'done HH:MM', 'due HH:MM'
+              // and 'not recorded' are what the screen has always said.
+              value,
+              style: TextStyle(
+                color: tone,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
